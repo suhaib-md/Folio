@@ -55,9 +55,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
+          workspaces: |
+            src-tauri -> target
+            src-tauri/folio-core -> target
       - run: npm ci
       - run: npm test
+      # Read-only check, NTFS rename-over and watcher path matching on Windows.
+      - run: cargo test --manifest-path src-tauri/folio-core/Cargo.toml
       - run: npx tauri build
       - uses: actions/upload-artifact@v4
         with:
@@ -67,6 +71,7 @@ jobs:
 
   release:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: test
     runs-on: windows-latest
     permissions:
       contents: write

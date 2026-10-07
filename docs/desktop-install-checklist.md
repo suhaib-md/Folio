@@ -26,8 +26,9 @@ installer build.
 - [ ] Open the same file in Notepad: the change is there and line endings
       are unchanged (a CRLF file is still CRLF, an LF file still LF).
 - [ ] Edit again, then close the tab (or the window): the prompt
-      **Save changes to <name>?** appears with **Save** / **Don't save** /
+      **`Save changes to <name>?`** appears with **Save** / **Don't save** /
       **Cancel**, and each button behaves accordingly.
+- [ ] Press F5 / Ctrl+R with unsaved edits → nothing reloads, edits stay.
 
 ## Optional
 
