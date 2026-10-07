@@ -1,4 +1,4 @@
-// Bundles src/ into one self-contained dist/md-viewer.html.
+// Bundles src/ into one self-contained dist/folio.html.
 import { build } from 'esbuild';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
@@ -26,5 +26,5 @@ const html = template
   .replace('/*__JS__*/', () => js);
 
 await mkdir('dist', { recursive: true });
-await writeFile('dist/md-viewer.html', html);
-console.log(`dist/md-viewer.html  ${(html.length / 1024).toFixed(0)} KB`);
+await writeFile('dist/folio.html', html);
+console.log(`dist/folio.html  ${(html.length / 1024).toFixed(0)} KB`);

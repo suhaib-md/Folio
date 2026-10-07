@@ -225,3 +225,11 @@ main {
 .hljs-deletion { color: var(--hl-keyword); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
+
+.wordmark {
+  margin: 0 0 20px;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}

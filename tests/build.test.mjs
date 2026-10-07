@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 execFileSync(process.execPath, ['build.mjs']);
-const html = readFileSync('dist/md-viewer.html', 'utf8');
+const html = readFileSync('dist/folio.html', 'utf8');
 
 function load() {
   const dom = new JSDOM(html, { runScripts: 'dangerously', pretendToBeVisual: true });
@@ -56,4 +56,8 @@ test('non-file drags are blocked so the page never navigates away', () => {
   assert.equal(over.dataTransfer.dropEffect, 'none');
   assert.equal(fire('drop').defaultPrevented, true);
   assert.equal(win.document.getElementById('drop').hidden, true);
+});
+
+test('built page is named Folio before a file is opened', () => {
+  assert.equal(load().document.title, 'Folio');
 });
