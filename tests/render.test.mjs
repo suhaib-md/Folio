@@ -96,8 +96,11 @@ test('render time grows linearly with document size', () => {
   const small = doc(1000);
   const big = doc(4000);
   render(small); // warm up
-  const a = Math.min(time(small), time(small));
-  const b = time(big);
+  // Best of 3 per size: shared CI runners have noisy neighbours.
+  const best = (s) => Math.min(time(s), time(s), time(s));
+  render(big); // warm up
+  const a = best(small);
+  const b = best(big);
   // 4x the input: linear is ~4x the time, the old walkTokens path was ~16x.
   assert.ok(b < a * 8, `4x input took ${(b / a).toFixed(1)}x the time (${a.toFixed(0)} -> ${b.toFixed(0)} ms)`);
 });
