@@ -5,7 +5,7 @@ import * as backend from './backend.js';
 import * as T from './tabs.js';
 import { createEditor } from './editor.js';
 import { confirmSave, setModalHooks } from './modal.js';
-import { planWindowClose } from './closing.js';
+import { runWindowClose } from './closing.js';
 import { basename, resolveRelative, isMarkdownPath } from './paths.js';
 
 const renderMarkdown = createRenderer(window);
@@ -232,9 +232,16 @@ const errorReason = (err) =>
 // Save the tab (Save As if it is untitled or `as` is set). Resolves true once
 // the text is on disk, false if the user cancelled the dialog or the write
 // failed (the tab then shows `Couldn't save <name>: <reason>`).
+// A plain save during an in-flight save of the same tab joins it; a Save As
+// waits for it and then runs.
 function save(id, { as = false } = {}) {
-  if (saving.has(id)) return saving.get(id);
-  const run = saveNow(id, as).finally(() => saving.delete(id));
+  const inFlight = saving.get(id);
+  if (inFlight && !as) return inFlight;
+  const run = (inFlight ? inFlight.catch(() => {}) : Promise.resolve())
+    .then(() => saveNow(id, as))
+    .finally(() => {
+      if (saving.get(id) === run) saving.delete(id);
+    });
   saving.set(id, run);
   return run;
 }
@@ -326,14 +333,9 @@ async function closeTabFlowNow(id) {
   return true;
 }
 
-// Window close: the same prompt for each dirty tab, in order; any Cancel
-// (or failed save) keeps the window open.
-async function closeWindowFlow() {
-  for (const { id } of planWindowClose(getState())) {
-    if (!(await closeTabFlow(id))) return false;
-  }
-  return true;
-}
+// Window close: the same prompt for each dirty tab, in order (re-planned
+// after each one); any Cancel (or failed save) keeps the window open.
+const closeWindowFlow = () => runWindowClose({ getState, closeTabFlow });
 
 let windowClosing = false;
 
