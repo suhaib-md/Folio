@@ -84,3 +84,20 @@ test('strips style and forms', () => {
   assert.doesNotMatch(html, /<form/i);
   assert.doesNotMatch(html, /style=/i);
 });
+
+test('render time grows linearly with document size', () => {
+  const doc = (n) => Array.from({ length: n }, (_, i) =>
+    `## S${i}\n\nText *em* \`c\`.\n\n- a\n- b\n\n\`\`\`js\nlet x = ${i};\n\`\`\`\n`).join('\n');
+  const time = (s) => {
+    const t = performance.now();
+    render(s);
+    return performance.now() - t;
+  };
+  const small = doc(1000);
+  const big = doc(4000);
+  render(small); // warm up
+  const a = Math.min(time(small), time(small));
+  const b = time(big);
+  // 4x the input: linear is ~4x the time, the old walkTokens path was ~16x.
+  assert.ok(b < a * 8, `4x input took ${(b / a).toFixed(1)}x the time (${a.toFixed(0)} -> ${b.toFixed(0)} ms)`);
+});

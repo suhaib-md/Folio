@@ -197,14 +197,11 @@ export function createEditor(parent, { onChange }) {
 
   const sameDoc = (state, text) => state.doc.length === text.length && state.doc.toString() === text;
 
-  // Callers flush() before switching tabs; this is a safety net only (a
-  // dropped batch would leave the tab model behind the editor).
+  // Typed text is never dropped: a pending batch is delivered (for the tab
+  // being parked) before its state leaves the view.
   function park() {
     if (current == null) return;
-    if (pending) {
-      console.error('editor: unflushed changes while switching');
-      dropPending();
-    }
+    flush();
     states.set(current, view.state);
     scrolls.set(current, view.scrollSnapshot());
   }
@@ -214,10 +211,14 @@ export function createEditor(parent, { onChange }) {
     // unless its text differs from `text`, i.e. the file changed underneath.
     show(tabId, text) {
       if (tabId === current) {
-        if (!sameDoc(view.state, text)) {
-          dropPending(); // the new text replaces any unreported typing
-          view.setState(newState(text));
+        // Unreported typing wins: deliver it, and keep the doc (`text` was
+        // read before it). The app's render flushes on entry, so normally
+        // nothing is pending here.
+        if (pending) {
+          flush();
+          return;
         }
+        if (!sameDoc(view.state, text)) view.setState(newState(text));
         return;
       }
       park();

@@ -20,7 +20,12 @@ const panes = $('panes');
 const editorEl = $('editor');
 const modeSwitch = $('mode-switch');
 
-const PREVIEW_DELAY = 150; // ms after typing stops before Split re-renders
+// Split re-renders the preview PREVIEW_DELAY ms after typing stops (spec:
+// 150 ms). Extension beyond the spec: when a tab's last render took longer
+// than PREVIEW_DELAY / 2 (only big documents: a render blocks the window), the
+// delay becomes 2x that render time, so typing is never interrupted by a
+// render before the user has paused that long.
+const PREVIEW_DELAY = 150;
 const wide = window.matchMedia('(min-width: 900px)'); // narrower: Split shows as Edit
 
 let state = T.createState();
@@ -28,6 +33,8 @@ let shown = { id: null, text: null }; // what #doc currently displays
 let view = 'read'; // what is on screen: 'read' | 'edit' | 'split'
 let editorFor = { id: null, text: null }; // tab (and text) the editor holds
 let previewTimer = null;
+let rendering = false;
+const renderCost = new Map(); // tab id -> ms the last #doc render took (incl. layout)
 let lastTitle = null;
 let lastTabsKey = null;
 const beforeSplit = new Map(); // tab id -> mode to return to when leaving Split
@@ -36,12 +43,20 @@ const editor = createEditor(editorEl, { onChange: onEditorChange });
 
 // ---- state ---------------------------------------------------------------
 
-const activeTab = () => state.tabs.find((t) => t.id === state.activeId) || null;
+// The editor reports big documents' text in batches (see editor.js). Code
+// outside commit/render reads state through getState()/getActiveTab(), which
+// flush that pending text into the model first, so it never sees stale text.
+function getState() {
+  editor.flush();
+  return state;
+}
+const findActive = (s) => s.tabs.find((t) => t.id === s.activeId) || null;
+const getActiveTab = () => findActive(getState());
+// Raw read, for render() and helpers it calls (render flushes on entry).
+const activeTab = () => findActive(state);
 
-// Every state change goes through here, as `update(state) -> next state`.
-// The editor reports big documents' text in batches, so its pending text is
-// flushed into the model first; `update` always sees the current text.
-// (Anything reading tab text outside commit must call editor.flush() too.)
+// Every state change goes through here, as `update(state) -> next state`;
+// `update` always sees the current text (pending editor text is flushed).
 function commit(update) {
   editor.flush();
   state = update(state);
@@ -55,7 +70,9 @@ function onEditorChange(text) {
   if (!id) return;
   editorFor = { id, text };
   state = T.setText(state, id, text);
-  render();
+  // A flush from inside render (its entry, or the editor parking a tab) only
+  // updates the model; that render is already drawing it.
+  if (!rendering) render();
 }
 
 // ---- modes ---------------------------------------------------------------
@@ -70,7 +87,7 @@ const showsDoc = (v) => v !== 'edit';
 const showsEditor = (v) => v !== 'read';
 
 function setMode(mode) {
-  const tab = activeTab();
+  const tab = getActiveTab();
   if (!tab || tab.mode === mode) return;
   if (mode === 'split') beforeSplit.set(tab.id, tab.mode);
   const editorHadFocus = editorEl.contains(document.activeElement);
@@ -81,14 +98,14 @@ function setMode(mode) {
 
 // Ctrl+E: Read -> Edit, Edit -> Read, Split -> Read.
 function toggleEdit() {
-  const tab = activeTab();
+  const tab = getActiveTab();
   if (tab) setMode(tab.mode === 'read' ? 'edit' : 'read');
 }
 
 // Ctrl+\: into Split, and back out to the mode the tab had before (Edit if
 // it was opened in Split some other way).
 function toggleSplit() {
-  const tab = activeTab();
+  const tab = getActiveTab();
   if (!tab) return;
   setMode(tab.mode === 'split' ? beforeSplit.get(tab.id) || 'edit' : 'split');
 }
@@ -198,6 +215,7 @@ function closeTab(id) {
   commit((s) => T.closeTab(s, id));
   editor.destroyState(id);
   beforeSplit.delete(id);
+  renderCost.delete(id);
 }
 
 // ---- rendering -----------------------------------------------------------
@@ -205,6 +223,17 @@ function closeTab(id) {
 // Only the active tab is on screen. The editor DOM is persistent: tabs swap
 // editor states, and typing never re-creates it or the rendered document.
 function render() {
+  if (rendering) return; // never re-entered (see onEditorChange)
+  rendering = true;
+  try {
+    editor.flush();
+    renderNow();
+  } finally {
+    rendering = false;
+  }
+}
+
+function renderNow() {
   const tab = activeTab();
   const next = viewOf(tab);
   const hasTabs = state.tabs.length > 0;
@@ -280,13 +309,21 @@ function render() {
 }
 
 function renderShown(tab) {
+  const t0 = performance.now();
   renderDoc(tab);
   shown = { id: tab.id, text: tab.text };
+  // Cost includes the layout and paint that follow.
+  const id = tab.id;
+  requestAnimationFrame(() => setTimeout(() => renderCost.set(id, performance.now() - t0), 0));
 }
 
 function cancelPreview() {
   clearTimeout(previewTimer);
   previewTimer = null;
+}
+
+function previewDelay(tab) {
+  return Math.max(PREVIEW_DELAY, 2 * (renderCost.get(tab?.id) || 0));
 }
 
 function schedulePreview() {
@@ -295,7 +332,7 @@ function schedulePreview() {
     previewTimer = null;
     const tab = activeTab();
     if (tab && view === 'split' && shown.text !== tab.text) renderShown(tab);
-  }, PREVIEW_DELAY);
+  }, previewDelay(activeTab()));
 }
 
 // Rebuilt only when something it shows changed (not on every keystroke).
@@ -404,7 +441,7 @@ doc.addEventListener('click', (e) => {
   } else if (/^(https?|mailto):/i.test(href)) {
     backend.openExternal(href).catch((err) => console.warn('openExternal failed:', err));
   } else {
-    const p = resolveRelative(activeTab()?.path, href);
+    const p = resolveRelative(getActiveTab()?.path, href);
     if (p && isMarkdownPath(p)) openPaths([p]);
   }
 });
@@ -418,8 +455,11 @@ $('start-open-file').addEventListener('click', pickAndOpen);
 
 // Capture phase, so the shortcuts also work (and win) inside the editor.
 window.addEventListener('keydown', (e) => {
-  if (!e.ctrlKey || e.altKey || e.metaKey) return;
+  if (!e.ctrlKey || e.metaKey) return;
   const key = e.key.toLowerCase();
+  // AltGr arrives as Ctrl+Alt on Windows, and some layouts (German, French,
+  // ...) need AltGr to type "\": allow Alt only for that character.
+  if (e.altKey && key !== '\\') return;
   const plain = !e.shiftKey;
   let action;
   if (key === 'o' && plain) {
@@ -448,6 +488,9 @@ window.addEventListener('keydown', (e) => {
   if (!action) return;
   e.preventDefault();
   e.stopPropagation();
+  // Every app shortcut sees the latest typed text. (Not done for plain typing
+  // keys: that would turn a big document into a string on every keystroke.)
+  editor.flush();
   action();
 }, true);
 
@@ -462,8 +505,15 @@ async function startup() {
   render();
   // Subscribe before asking for launch paths so a second launch that
   // arrives in between is not lost.
-  await backend.onOpenPaths((paths) => openPaths(paths));
-  await backend.onDragDrop((paths) => openPaths(paths));
+  // Backend events flush typed text into the model before they act on it.
+  await backend.onOpenPaths((paths) => {
+    editor.flush();
+    openPaths(paths);
+  });
+  await backend.onDragDrop((paths) => {
+    editor.flush();
+    openPaths(paths);
+  });
   await openPaths(await backend.launchPaths());
 }
 

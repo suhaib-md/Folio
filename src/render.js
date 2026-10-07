@@ -1,27 +1,30 @@
 import { Marked } from 'marked';
-import { markedHighlight } from 'marked-highlight';
 import { gfmHeadingId, resetHeadings } from 'marked-gfm-heading-id';
 import createDOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
 
+const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ESCAPES[c]);
+
+// Fenced/indented code -> <pre><code class="hljs language-x">. Highlighting
+// happens here, at render time, rather than in a walkTokens extension:
+// marked's walkTokens concatenates arrays per token, which made big documents
+// O(n^2) (a 1 MB file took ~48 s instead of well under a second).
+function code({ text, lang }) {
+  const name = (lang || '').match(/\S*/)[0];
+  // Unlabelled or unknown languages stay plain: auto-detection is slow on big
+  // blocks and miscolours logs, diagrams and data.
+  const body = name && hljs.getLanguage(name)
+    ? hljs.highlight(text, { language: name }).value
+    : escapeHtml(text);
+  const cls = name ? `hljs language-${escapeHtml(name)}` : 'hljs';
+  return `<pre><code class="${cls}">${body.replace(/\n$/, '')}\n</code></pre>`;
+}
+
 // Markdown text -> sanitised HTML. Takes a window so it runs in the browser,
 // under jsdom in tests, and later inside the Tauri app.
 export function createRenderer(win) {
-  const marked = new Marked(
-    markedHighlight({
-      emptyLangClass: 'hljs',
-      langPrefix: 'hljs language-',
-      highlight(code, lang) {
-        // Unlabelled or unknown languages stay plain: auto-detection is slow
-        // on big blocks and miscolours logs, diagrams and data.
-        if (lang && hljs.getLanguage(lang)) {
-          return hljs.highlight(code, { language: lang }).value;
-        }
-        return code;
-      },
-    }),
-    gfmHeadingId(),
-  );
+  const marked = new Marked({ renderer: { code } }, gfmHeadingId());
 
   const purify = createDOMPurify(win);
   purify.addHook('afterSanitizeAttributes', (node) => {
