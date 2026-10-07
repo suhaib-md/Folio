@@ -14,7 +14,11 @@
 
   <div id="toolbar" class="toolbar" hidden>
     <span id="filename" class="filename"></span>
-    <div id="mode-switch" class="mode-switch" hidden></div>
+    <div id="mode-switch" class="mode-switch" role="group" aria-label="View mode">
+      <button type="button" class="mode-btn" data-mode="read" aria-pressed="false" title="Read (Ctrl+E)">Read</button>
+      <button type="button" class="mode-btn" data-mode="edit" aria-pressed="false" title="Edit (Ctrl+E)">Edit</button>
+      <button type="button" class="mode-btn" data-mode="split" aria-pressed="false" title="Split (Ctrl+\)">Split</button>
+    </div>
   </div>
 
   <div id="app-banner" class="banner banner-error" role="alert" hidden>
@@ -22,20 +26,23 @@
     <button id="app-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss">×</button>
   </div>
 
-  <main id="content" class="content">
-    <div class="column">
-      <section id="start" class="empty start">
-        <h1 class="wordmark">Folio</h1>
-        <div class="start-actions">
-          <button id="start-open-file" type="button" class="btn btn-primary" title="Open a file (Ctrl+O)">Open file</button>
-          <button id="start-open-folder" type="button" class="btn" title="Open a folder (Ctrl+Shift+O)" disabled>Open folder</button>
-          <button id="start-new-file" type="button" class="btn" title="New file (Ctrl+N)" disabled>New file</button>
-        </div>
-        <p>or drop a Markdown file here</p>
-      </section>
-      <article id="doc" class="markdown" hidden></article>
-    </div>
-  </main>
+  <div id="panes" class="panes" data-view="read">
+    <div id="editor" class="editor-pane" hidden></div>
+    <main id="content" class="content" tabindex="-1">
+      <div class="column">
+        <section id="start" class="empty start">
+          <h1 class="wordmark">Folio</h1>
+          <div class="start-actions">
+            <button id="start-open-file" type="button" class="btn btn-primary" title="Open a file (Ctrl+O)">Open file</button>
+            <button id="start-open-folder" type="button" class="btn" title="Open a folder (Ctrl+Shift+O)" disabled>Open folder</button>
+            <button id="start-new-file" type="button" class="btn" title="New file (Ctrl+N)" disabled>New file</button>
+          </div>
+          <p>or drop a Markdown file here</p>
+        </section>
+        <article id="doc" class="markdown" hidden></article>
+      </div>
+    </main>
+  </div>
 </div>
 </body>
 </html>

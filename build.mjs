@@ -1,7 +1,7 @@
 // Bundles src/ into one self-contained dist/folio.html.
 // With --desktop: bundles the desktop app shell into dist-desktop/ instead.
 import { build } from 'esbuild';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 if (process.argv.includes('--desktop')) {
   await buildDesktop();
@@ -9,13 +9,17 @@ if (process.argv.includes('--desktop')) {
   await buildWeb();
 }
 
-// dist-desktop/: index.html + app.js (ES module) + app.css. Served as
+// dist-desktop/: index.html + app.js (ES module) + app.css, plus chunks/ for
+// code loaded on demand (the editor's fenced-code languages). Served as
 // separate files (Tauri's CSP allows 'self' scripts, no inline ones).
 async function buildDesktop() {
+  await rm('dist-desktop/chunks', { recursive: true, force: true });
   await mkdir('dist-desktop', { recursive: true });
   await build({
-    entryPoints: ['src/desktop/main.js'],
-    outfile: 'dist-desktop/app.js',
+    entryPoints: { app: 'src/desktop/main.js' },
+    outdir: 'dist-desktop',
+    chunkNames: 'chunks/[name]-[hash]',
+    splitting: true,
     bundle: true,
     format: 'esm',
     minify: true,
@@ -28,7 +32,7 @@ async function buildDesktop() {
   ].join('\n');
   await writeFile('dist-desktop/app.css', css);
   await copyFile('src/desktop/index.html', 'dist-desktop/index.html');
-  console.log('dist-desktop/  index.html, app.js, app.css');
+  console.log('dist-desktop/  index.html, app.js, app.css, chunks/');
 }
 
 async function buildWeb() {

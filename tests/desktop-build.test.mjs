@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 
 test('desktop build writes index.html, app.js and app.css', () => {
   execFileSync(process.execPath, ['build.mjs', '--desktop']);
@@ -15,6 +16,25 @@ test('desktop build writes index.html, app.js and app.css', () => {
   const css = readFileSync('dist-desktop/app.css', 'utf8');
   assert.ok(css.includes(readFileSync('src/styles.css', 'utf8')));
   assert.ok(css.includes(readFileSync('src/desktop/app.css', 'utf8')));
+});
+
+test('desktop build splits on-demand code into chunks/ that all resolve', () => {
+  execFileSync(process.execPath, ['build.mjs', '--desktop']);
+  const chunks = readdirSync('dist-desktop/chunks');
+  assert.ok(chunks.length > 0, 'no chunks');
+  // Every relative import (static or dynamic) in app.js and the chunks
+  // points at a file that exists, so lazy language loading can't 404.
+  const files = ['dist-desktop/app.js', ...chunks.map((c) => `dist-desktop/chunks/${c}`)];
+  const dynamic = [];
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8');
+    for (const m of src.matchAll(/(import\(|from|import)\s*"(\.\.?\/[^"]+)"/g)) {
+      const target = path.join(path.dirname(f), m[2]);
+      assert.ok(existsSync(target), `${f} imports missing ${m[2]}`);
+      if (m[1] === 'import(') dynamic.push(target);
+    }
+  }
+  assert.ok(dynamic.some((p) => /python/i.test(readFileSync(p, 'utf8'))), 'language chunks not split out');
 });
 
 test('only backend.js imports @tauri-apps', () => {

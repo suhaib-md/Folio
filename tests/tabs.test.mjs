@@ -87,6 +87,19 @@ test('setMode and setBanner', () => {
   assert.equal(s.tabs[0].banner, null);
 });
 
+test('setMode accepts read|edit|split and rejects others', () => {
+  let s = open(createState(), 'a.md');
+  const id = s.activeId;
+  for (const mode of ['edit', 'split', 'read']) {
+    s = setMode(s, id, mode);
+    assert.equal(s.tabs[0].mode, mode);
+  }
+  for (const bad of ['preview', '', 'Edit', null, undefined, 3]) {
+    assert.equal(setMode(s, id, bad), s, `mode ${String(bad)} accepted`);
+  }
+  assert.equal(s.tabs[0].mode, 'read');
+});
+
 test('close activates right then left', () => {
   let s = createState();
   s = open(s, 'a.md'); s = open(s, 'b.md'); s = open(s, 'c.md');

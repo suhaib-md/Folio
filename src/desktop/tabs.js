@@ -53,7 +53,9 @@ function update(state, id, fn) {
 }
 
 export const setText = (state, id, text) => update(state, id, () => ({ text }));
-export const setMode = (state, id, mode) => update(state, id, () => ({ mode }));
+export const MODES = ['read', 'edit', 'split'];
+export const setMode = (state, id, mode) =>
+  (MODES.includes(mode) ? update(state, id, () => ({ mode })) : state);
 export const setBanner = (state, id, banner) => update(state, id, () => ({ banner }));
 export const clearSaved = (state, id) => update(state, id, () => ({ savedText: null }));
 
