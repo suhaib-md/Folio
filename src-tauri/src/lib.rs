@@ -24,6 +24,14 @@ fn existing_paths<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
     args.into_iter().filter(|a| Path::new(a).exists()).collect()
 }
 
+fn existing_paths_in<I: IntoIterator<Item = String>>(args: I, cwd: &Path) -> Vec<String> {
+    args.into_iter()
+        .map(|a| cwd.join(a))
+        .filter(|p| p.exists())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
 #[tauri::command]
 fn launch_paths() -> Vec<String> {
     existing_paths(std::env::args().skip(1))
@@ -52,18 +60,22 @@ fn recent_get(store: State<RecentStore>) -> Recent {
 
 #[tauri::command]
 fn recent_add(store: State<RecentStore>, path: String, kind: Kind) -> Result<Recent, String> {
-    let mut r = store.inner.lock().unwrap();
-    r.add(&path, kind);
-    r.save(&store.path)?;
-    Ok(r.clone())
+    let mut guard = store.inner.lock().unwrap();
+    let mut next = guard.clone();
+    next.add(&path, kind);
+    next.save(&store.path)?;
+    *guard = next.clone();
+    Ok(next)
 }
 
 #[tauri::command]
 fn recent_remove(store: State<RecentStore>, path: String) -> Result<Recent, String> {
-    let mut r = store.inner.lock().unwrap();
-    r.remove(&path);
-    r.save(&store.path)?;
-    Ok(r.clone())
+    let mut guard = store.inner.lock().unwrap();
+    let mut next = guard.clone();
+    next.remove(&path);
+    next.save(&store.path)?;
+    *guard = next.clone();
+    Ok(next)
 }
 
 pub fn run() {
@@ -71,8 +83,8 @@ pub fn run() {
 
     tauri::Builder::default()
         // Must be registered first.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            let paths = existing_paths(argv.into_iter().skip(1));
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let paths = existing_paths_in(argv.into_iter().skip(1), Path::new(&cwd));
             if !paths.is_empty() {
                 let _ = app.emit("open-paths", paths);
             }
