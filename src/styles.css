@@ -1,0 +1,227 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --border: #d1d9e0;
+  --subtle: #f6f8fa;
+  --accent: #0969da;
+  --accent-fg: #ffffff;
+  --danger-bg: #ffebe9;
+  --danger-fg: #82071e;
+  --overlay: rgb(9 105 218 / 0.08);
+
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-number: #0550ae;
+  --hl-title: #8250df;
+  --hl-comment: #6e7781;
+  --hl-attr: #0550ae;
+  --hl-tag: #116329;
+  --hl-variable: #953800;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #9198a1;
+    --border: #3d444d;
+    --subtle: #151b23;
+    --accent: #4493f8;
+    --accent-fg: #0d1117;
+    --danger-bg: #3c1618;
+    --danger-fg: #ffa198;
+    --overlay: rgb(68 147 248 / 0.12);
+
+    --hl-keyword: #ff7b72;
+    --hl-string: #a5d6ff;
+    --hl-number: #79c0ff;
+    --hl-title: #d2a8ff;
+    --hl-comment: #8b949e;
+    --hl-attr: #79c0ff;
+    --hl-tag: #7ee787;
+    --hl-variable: #ffa657;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 -apple-system, "Segoe UI", system-ui, "Noto Sans", Helvetica, Arial, sans-serif;
+}
+
+[hidden] { display: none !important; }
+
+/* Top bar */
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.filename {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.btn {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--subtle);
+  color: var(--fg);
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--muted); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  padding: 10px 22px;
+  font-size: 16px;
+}
+.btn-primary:hover { filter: brightness(1.08); border-color: var(--accent); }
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 16px 96px;
+}
+
+/* Empty state */
+.empty {
+  min-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  color: var(--muted);
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 32px 16px;
+}
+
+.error {
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+/* Drop overlay */
+.drop {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay);
+  border: 3px dashed var(--accent);
+  pointer-events: none;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.drop span {
+  background: var(--bg);
+  padding: 12px 24px;
+  border-radius: 8px;
+}
+
+/* Rendered Markdown */
+.markdown { overflow-wrap: break-word; }
+.markdown > :first-child { margin-top: 0; }
+.markdown h1, .markdown h2, .markdown h3,
+.markdown h4, .markdown h5, .markdown h6 {
+  margin: 1.5em 0 0.5em;
+  line-height: 1.25;
+  font-weight: 600;
+  scroll-margin-top: 64px;
+}
+.markdown h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.markdown h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.markdown h3 { font-size: 1.25em; }
+.markdown h4 { font-size: 1em; }
+.markdown h5 { font-size: 0.875em; }
+.markdown h6 { font-size: 0.85em; color: var(--muted); }
+.markdown p, .markdown ul, .markdown ol, .markdown blockquote,
+.markdown pre, .markdown table { margin: 0 0 16px; }
+.markdown a { color: var(--accent); text-decoration: none; }
+.markdown a:hover { text-decoration: underline; }
+.markdown ul, .markdown ol { padding-left: 2em; }
+.markdown li + li { margin-top: 0.25em; }
+.markdown li > input[type="checkbox"] { margin: 0 0.4em 0.2em -1.4em; vertical-align: middle; }
+.markdown li:has(> input[type="checkbox"]) { list-style: none; }
+.markdown blockquote {
+  padding: 0 1em;
+  color: var(--muted);
+  border-left: 0.25em solid var(--border);
+}
+.markdown hr { height: 0.25em; margin: 24px 0; border: 0; background: var(--border); }
+.markdown img { max-width: 100%; height: auto; }
+
+.markdown code {
+  font: 85%/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+  background: var(--subtle);
+  border-radius: 6px;
+  padding: 0.2em 0.4em;
+}
+.markdown pre {
+  overflow-x: auto;
+  padding: 16px;
+  background: var(--subtle);
+  border-radius: 6px;
+}
+.markdown pre code { padding: 0; background: none; font-size: 85%; }
+
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.markdown th, .markdown td { padding: 6px 13px; border: 1px solid var(--border); }
+.markdown th { font-weight: 600; }
+.markdown tr:nth-child(2n) { background: var(--subtle); }
+
+/* highlight.js tokens */
+.hljs-keyword, .hljs-meta .hljs-keyword, .hljs-template-tag, .hljs-type,
+.hljs-doctag, .hljs-selector-tag { color: var(--hl-keyword); }
+.hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--hl-string); }
+.hljs-number, .hljs-literal, .hljs-built_in, .hljs-symbol,
+.hljs-variable.constant_, .hljs-attribute { color: var(--hl-number); }
+.hljs-title, .hljs-title.class_, .hljs-title.function_ { color: var(--hl-title); }
+.hljs-comment, .hljs-code, .hljs-formula { color: var(--hl-comment); font-style: italic; }
+.hljs-attr, .hljs-property, .hljs-selector-attr, .hljs-selector-class,
+.hljs-selector-id { color: var(--hl-attr); }
+.hljs-name, .hljs-quote, .hljs-selector-pseudo, .hljs-section { color: var(--hl-tag); }
+.hljs-variable, .hljs-template-variable, .hljs-params { color: var(--hl-variable); }
+.hljs-addition { color: var(--hl-tag); }
+.hljs-deletion { color: var(--hl-keyword); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }

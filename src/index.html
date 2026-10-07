@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https: http: data:">
+<title>Markdown Viewer</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<header id="bar" class="bar" hidden>
+  <span id="filename" class="filename"></span>
+  <button id="open-bar" type="button" class="btn" title="Open a file (Ctrl+O)">Open</button>
+</header>
+
+<main>
+  <section id="empty" class="empty">
+    <button id="open-empty" type="button" class="btn btn-primary" title="Open a file (Ctrl+O)">Open file</button>
+    <p>or drop a .md file here</p>
+  </section>
+  <div id="error" class="error" role="alert" hidden></div>
+  <article id="doc" class="markdown"></article>
+</main>
+
+<div id="drop" class="drop" hidden><span>Drop to open</span></div>
+<input id="picker" type="file" accept=".md,.markdown,.txt" hidden>
+<script>/*__JS__*/</script>
+</body>
+</html>
