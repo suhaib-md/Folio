@@ -8,6 +8,8 @@ import { confirmSave, setModalHooks } from './modal.js';
 import { runWindowClose } from './closing.js';
 import { decide } from './reload.js';
 import { basename, resolveRelative, isMarkdownPath } from './paths.js';
+import { renderTree } from './sidebar.js';
+import { renderRecent } from './recent.js';
 
 const renderMarkdown = createRenderer(window);
 const $ = (id) => document.getElementById(id);
@@ -25,6 +27,8 @@ const modeSwitch = $('mode-switch');
 const tabBanner = $('tab-banner');
 const tabBannerText = $('tab-banner-text');
 const tabBannerActions = $('tab-banner-actions');
+const sidebarEl = $('sidebar');
+const recentEl = $('recent');
 
 // Split re-renders the preview PREVIEW_DELAY ms after typing stops (spec:
 // 150 ms). Extension beyond the spec: when a tab's last render took longer
@@ -33,6 +37,7 @@ const tabBannerActions = $('tab-banner-actions');
 // render before the user has paused that long.
 const PREVIEW_DELAY = 150;
 const wide = window.matchMedia('(min-width: 900px)'); // narrower: Split shows as Edit
+const roomy = window.matchMedia('(min-width: 700px)'); // narrower: no sidebar
 
 let state = T.createState();
 let shown = { id: null, text: null }; // what #doc currently displays
@@ -44,6 +49,19 @@ const renderCost = new Map(); // tab id -> ms the last #doc render took (incl. l
 let lastTitle = null;
 let lastTabsKey = null;
 const beforeSplit = new Map(); // tab id -> mode to return to when leaving Split
+
+// The open folder (one at a time) and the sidebar showing it.
+let folder = null; // { path, root, truncated } from list_tree
+let folderSeq = 0; // bumped when another folder is opened
+let expanded = new Set(); // folder paths expanded in the sidebar (root always is)
+let treeVersion = 0; // bumped when `folder` or `expanded` change
+let lastSidebarKey = null;
+// The user's Ctrl+B choice. Narrow windows hide the sidebar without
+// changing it, so it comes back when the window widens.
+let sidebarWanted = true;
+
+let recent = { files: [], folders: [] }; // as last returned by the backend
+let lastRecentKey = null;
 
 const editor = createEditor(editorEl, { onChange: onEditorChange });
 
@@ -128,6 +146,7 @@ modeSwitch.addEventListener('click', (e) => {
 });
 
 wide.addEventListener('change', () => render());
+roomy.addEventListener('change', () => render());
 
 // ---- app banner ----------------------------------------------------------
 
@@ -149,43 +168,53 @@ $('tab-banner-close').addEventListener('click', () => {
 
 // ---- opening -------------------------------------------------------------
 
-// While a modal is open, incoming paths wait and are opened when it
-// closes. Opens run one at a time so order is kept and duplicates focus.
+// While a modal is open, incoming opens wait and run when it closes. Opens
+// run one at a time so order is kept and duplicates focus.
 let modalOpen = false;
-const pending = [];
+const pending = []; // jobs: { path, run() }
 let chain = Promise.resolve();
 
 export function setModalOpen(open) {
   modalOpen = open;
-  if (!open && pending.length) openPaths(pending.splice(0));
+  if (!open && pending.length) enqueue(pending.splice(0));
 }
 
-export function openPaths(paths) {
-  if (!paths || !paths.length) return chain;
+function enqueue(jobs) {
+  if (!jobs.length) return chain;
   if (modalOpen) {
-    pending.push(...paths);
+    pending.push(...jobs);
     return chain;
   }
   chain = chain.then(async () => {
-    for (const p of paths) {
-      // One bad file must not stop the rest, or leave the chain rejected
+    for (const job of jobs) {
+      // One bad open must not stop the rest, or leave the chain rejected
       // (which would silently skip every later open).
       try {
-        await openPath(p);
+        await job.run();
       } catch (err) {
-        console.error(`opening ${p} failed:`, err);
-        showOpenError(p);
+        console.error(`opening ${job.path} failed:`, err);
+        showOpenError(job.path);
       }
     }
   });
   return chain;
 }
 
+// `folders`: the paths may be folders too (dropped, launched, second
+// instance); those open in the sidebar.
+export function openPaths(paths, { folders = false } = {}) {
+  return enqueue((paths || []).map((path) => ({
+    path,
+    run: () => (folders ? openFileOrFolder(path) : openPath(path)),
+  })));
+}
+
 function showOpenError(path) {
   showBanner(`Couldn't open ${basename(path)}. Is it a text/Markdown file?`);
 }
 
-async function openPath(path) {
+// `fromRecent`: a recent-list entry; failing to read it means it is gone.
+async function openPath(path, { fromRecent = false } = {}) {
   const existing = T.findByPath(state, path);
   if (existing) {
     commit((s) => T.activate(s, existing.id));
@@ -196,7 +225,8 @@ async function openPath(path) {
     file = await backend.readFile(path);
   } catch (err) {
     console.warn(`readFile(${path}) failed:`, err);
-    showOpenError(path);
+    if (fromRecent) forgetRecent(path);
+    else showOpenError(path);
     return;
   }
   editor.flush(); // so `before` holds the latest typed text
@@ -209,7 +239,21 @@ async function openPath(path) {
     render();
     throw err;
   }
-  backend.recentAdd(path, 'file').catch((err) => console.warn('recentAdd failed:', err));
+  addRecent(path, 'file');
+}
+
+// A dropped or launched path: list_tree answers "not a folder" for a file
+// (and fails for anything unreadable), so a failed listing opens it as a
+// file, which reports its own error. An already open file skips the probe.
+async function openFileOrFolder(path) {
+  if (T.findByPath(state, path)) return openPath(path);
+  let listed;
+  try {
+    listed = await backend.listTree(path);
+  } catch {
+    return openPath(path);
+  }
+  return openFolder(path, { listed });
 }
 
 async function pickAndOpen() {
@@ -218,6 +262,129 @@ async function pickAndOpen() {
   } catch (err) {
     console.warn('pickFiles failed:', err);
   }
+}
+
+async function pickFolderAndOpen() {
+  let path;
+  try {
+    path = await backend.pickFolder();
+  } catch (err) {
+    console.warn('pickFolder failed:', err);
+    return;
+  }
+  if (path) await enqueue([{ path, run: () => openFolder(path) }]);
+}
+
+// ---- folder sidebar ------------------------------------------------------
+
+// Show `path` in the sidebar, replacing any open folder. `listed`: its
+// list_tree result, when the caller already has it.
+async function openFolder(path, { listed = null, fromRecent = false } = {}) {
+  let result = listed;
+  if (!result) {
+    try {
+      result = await backend.listTree(path);
+    } catch (err) {
+      console.warn(`listTree(${path}) failed:`, err);
+      if (fromRecent) forgetRecent(path);
+      else showBanner(`Couldn't open ${basename(path)}.`);
+      return;
+    }
+  }
+  // Re-opening the same folder keeps what was expanded.
+  const same = folder && T.normalizePath(folder.path) === T.normalizePath(path);
+  if (!same) expanded = new Set();
+  folder = { path, root: result.root, truncated: !!result.truncated };
+  folderSeq += 1;
+  treeVersion += 1;
+  sidebarWanted = true;
+  render();
+  addRecent(path, 'folder');
+}
+
+function toggleFolder(path) {
+  if (expanded.has(path)) expanded.delete(path);
+  else expanded.add(path);
+  treeVersion += 1;
+  render();
+}
+
+// Ctrl+B. Hiding it with focus inside moves focus to the document.
+function toggleSidebar() {
+  sidebarWanted = !sidebarWanted;
+  const hadFocus = sidebarEl.contains(document.activeElement);
+  render();
+  if (hadFocus && sidebarEl.hidden) {
+    if (showsEditor(view)) editor.focus();
+    else content.focus({ preventScroll: true });
+  }
+}
+
+// folder-changed: re-list, keeping `expanded`. Events during a re-list are
+// coalesced into one more re-list after it.
+let relisting = false;
+let relistAgain = false;
+
+async function onFolderChanged(payload) {
+  const changed = payload?.folder;
+  if (!folder || !changed || T.normalizePath(changed) !== T.normalizePath(folder.path)) return;
+  if (relisting) {
+    relistAgain = true;
+    return;
+  }
+  relisting = true;
+  try {
+    do {
+      relistAgain = false;
+      const { path } = folder;
+      const seq = folderSeq;
+      let result;
+      try {
+        result = await backend.listTree(path);
+      } catch (err) {
+        // Gone or unreadable right now: keep showing the last listing.
+        console.warn(`re-listing ${path} failed:`, err);
+        break;
+      }
+      if (seq !== folderSeq) break; // another folder was opened meanwhile
+      folder = { path, root: result.root, truncated: !!result.truncated };
+      treeVersion += 1;
+      render();
+    } while (relistAgain);
+  } finally {
+    relisting = false;
+  }
+}
+
+// ---- recent --------------------------------------------------------------
+
+// Every recent call returns both full lists. Only the latest-issued call's
+// answer is shown, so an older answer arriving late can't undo a newer one.
+let recentReq = 0;
+function trackRecent(call, what) {
+  const n = ++recentReq;
+  call.then((next) => {
+    if (n !== recentReq || !next) return;
+    recent = next;
+    render();
+  }, (err) => console.warn(`${what} failed:`, err));
+}
+
+function addRecent(path, kind) {
+  trackRecent(backend.recentAdd(path, kind), 'recentAdd');
+}
+
+// A recent entry that could not be opened: drop it and say so.
+function forgetRecent(path) {
+  showBanner(`${basename(path)} no longer exists.`);
+  trackRecent(backend.recentRemove(path), 'recentRemove');
+}
+
+function openRecent(path, kind) {
+  enqueue([{
+    path,
+    run: () => (kind === 'folder' ? openFolder(path, { fromRecent: true }) : openPath(path, { fromRecent: true })),
+  }]);
 }
 
 setModalHooks({ onOpen: () => setModalOpen(true), onClose: () => setModalOpen(false) });
@@ -290,7 +457,7 @@ async function saveNow(id, as) {
     const stale = getState().tabs.find((t) =>
       t.id !== id && t.path != null && T.normalizePath(t.path) === n && !T.isDirty(t));
     if (stale) closeTabNow(stale.id);
-    backend.recentAdd(path, 'file').catch((err) => console.warn('recentAdd failed:', err));
+    addRecent(path, 'file');
   }
   return true;
 }
@@ -368,7 +535,7 @@ function closeTab(id) {
 // changes (open, close, Save As). Calls are chained so they arrive in order.
 let watchKey = null;
 let watchChain = Promise.resolve();
-const currentFolder = () => null; // the sidebar (folder) comes later
+const currentFolder = () => folder?.path ?? null;
 
 function syncWatch() {
   const seen = new Map();
@@ -492,6 +659,8 @@ function renderNow() {
   doc.hidden = !tab;
 
   renderTabs();
+  renderSidebar(tab);
+  if (!hasTabs) renderRecentList();
 
   renderTabBanner(tab);
 
@@ -554,6 +723,31 @@ function renderNow() {
     lastTitle = title;
     backend.setTitle(title).catch((err) => console.warn('setTitle failed:', err));
   }
+}
+
+// Rebuilt only when the tree, what is expanded, or the active file changed.
+function renderSidebar(tab) {
+  const visible = !!folder && sidebarWanted && roomy.matches;
+  sidebarEl.hidden = !visible;
+  if (!visible) return;
+  const activePath = tab?.path ?? null;
+  const key = `${treeVersion}|${activePath == null ? '' : T.normalizePath(activePath)}`;
+  if (key === lastSidebarKey) return;
+  lastSidebarKey = key;
+  renderTree(sidebarEl, folder.root, {
+    activePath,
+    expanded,
+    truncated: folder.truncated,
+    onOpen: (path) => openPaths([path]),
+    onToggle: toggleFolder,
+  });
+}
+
+function renderRecentList() {
+  const key = JSON.stringify(recent);
+  if (key === lastRecentKey) return;
+  lastRecentKey = key;
+  renderRecent(recentEl, recent, { onOpen: openRecent });
 }
 
 // The active tab's own banner: a save error, or a change on disk.
@@ -719,6 +913,7 @@ doc.addEventListener('auxclick', (e) => {
 
 $('start-open-file').addEventListener('click', pickAndOpen);
 $('start-new-file').addEventListener('click', newFile);
+$('start-open-folder').addEventListener('click', pickFolderAndOpen);
 
 // Capture phase, so the shortcuts also work (and win) inside the editor.
 window.addEventListener('keydown', (e) => {
@@ -729,8 +924,10 @@ window.addEventListener('keydown', (e) => {
   if (e.altKey && key !== '\\') return;
   const plain = !e.shiftKey;
   let action;
-  if (key === 'o' && plain) {
-    action = pickAndOpen;
+  if (key === 'o') {
+    action = plain ? pickAndOpen : pickFolderAndOpen;
+  } else if (key === 'b' && plain) {
+    action = toggleSidebar;
   } else if (key === 'n' && plain) {
     action = newFile;
   } else if (key === 's') {
@@ -776,22 +973,26 @@ window.addEventListener('drop', (e) => e.preventDefault());
 
 async function startup() {
   render();
+  trackRecent(backend.recentGet(), 'recentGet');
   await backend.onCloseRequested(onCloseRequested);
   // Subscribe before asking for launch paths so a second launch that
   // arrives in between is not lost.
   // Backend events flush typed text into the model before they act on it.
   await backend.onOpenPaths((paths) => {
     editor.flush();
-    openPaths(paths);
+    openPaths(paths, { folders: true });
   });
   await backend.onFileChanged((change) => {
     onFileChanged(change).catch((err) => console.error('file change failed:', err));
   });
+  await backend.onFolderChanged((change) => {
+    onFolderChanged(change).catch((err) => console.error('folder change failed:', err));
+  });
   await backend.onDragDrop((paths) => {
     editor.flush();
-    openPaths(paths);
+    openPaths(paths, { folders: true });
   });
-  await openPaths(await backend.launchPaths());
+  await openPaths(await backend.launchPaths(), { folders: true });
 }
 
 startup().catch((err) => console.error('Folio failed to start:', err));

@@ -8,10 +8,20 @@
 //   change(path, text) write `text` to fs[path] and fire file-changed
 //                      'modified' (as the watcher would, if path is watched)
 //   remove(path)       delete fs[path] and fire file-changed 'removed'
+//   add(path, text)    create fs[path] (no file-changed: nothing has it open)
+//                      Each of change/remove/add also fires folder-changed
+//                      (async, like the debounced watcher) when the path is
+//                      inside the watched folder.
+//   addRecent(path, kind)  put a path on the recent lists without checking
+//                      that it exists (simulates an entry deleted since)
+//   listTreeCalls      number of listTree calls so far
 //   requestClose()     simulate the window close button
 //   opened, watched, closed, recent   what the app asked for
 // URL flags: ?failWrites=1 makes writeFile reject with "permission denied";
-// ?open=/a.md,/b.md sets the launch paths.
+// ?open=/a.md,/b.md sets the launch paths (files or folders);
+// ?truncated=1 makes listTree report a truncated tree;
+// ?recentFiles=/a.md,/b.md and ?recentFolders=/x seed the recent lists
+// (paths need not exist).
 
 const PIC =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAA8CAIAAAAiz+n/AAAC6UlEQVR42u3YUxZdWRhF4byWEdupOKnYNq917HOt2EkZLdw/dleqGzUyVhe+tzlXfNE3X/bNV33zdWm+Kc23pfmuNN+XZuPcbJqbzXOzZW62zmjbjLbPaMeM1ue0IaONGW3KaHNGWzLamtK2lA5M6OCEDk3o8JiOjOnomI6N6fiI9sd0IKaDMR2K6XDERyI+GvHPEV8Y8sUBXxrw5QFfGfDVAV/r8/U+nwv4fMAXfL7o8yWfL/t8xeerHj8o+GHBjwp+XHAll2outVzqudxz5b4jDxx56MgjRx47UulJtSduKl4qfiJBImEiUSJxIkksvY44HXE74nXEb2vQ1rCtUVtHkY5DnYY6C3Ue6iLQZaBPAh02ddTUcUMnDZ02dNbQeUMXdX3r6TtP33v6wdOPrv3k2l9c+6trX1ftm6p9W7XvqvZ91X6o2I8V+6liVwAa0IAGNKABDWhAA/qzgl65NKuWZvXSrFmYtQuzbmHWL8yGhfmhMD8WZmVhVhVmdU5rclqb07qcds5o15R2T2nPlH6a0t4p7ZvQ/gltT2lHSjtT2pXQ7oT2JLQ3oX0xnRjRyRGdGtHpEZ0Z8tkhnxvy+SEfi/h4yCdCPhnyqZBPh3wm4LMB3+jzzT7fKvl2yXdKvlvyvZLvF3zN4+se3/D4pse3XLntyh1X7rrSyKWZSSuTdiadTLqZ9FJxUqn1pN6TRleaXWl1pd2VTle6HUljyWLJYyliKSPtRzqIdBhp3NakpVlL85YWLS2b2m/qoKlPA30W6HNfX/j60tdXvr729Y2ny7o+qevTuj6r6/OafVGzL2v2Vc3+5tjfHfuHY/907F+O/btn/+nZf3uABjSgAQ1oQAMa0ID+zKARLChDQAMa0IAGNKABDWhA40ejDAENaEADGtCABjSgAY0fjTIENKABDWhAAxrQgAY0fjTKENCABjSgAQ1oQAMa0PjRCBaUIaABDWhAAxrQgAY0fjSCBWUIaEAD+n8H/R9PQyBWRm317gAAAABJRU5ErkJggg==';
@@ -75,17 +85,31 @@ const fs = {
   '/demo/README.md': README,
   '/demo/guide.md': GUIDE,
   '/demo/notes/todo.md': TODO,
+  '/demo/notes/ideas.md': '# Ideas\n\n- A folder sidebar.\n',
+  '/demo/notes/archive/2025 retrospective with a rather long file name.md': '# 2025\n\nLooking back.\n',
+  '/demo/notes/drafts.txt': 'not Markdown: not listed',
+  '/demo/.git/HEAD.md': 'hidden: not listed',
+  '/demo/node_modules/pkg/README.md': 'skipped: not listed',
   '/demo/img/pic.png': PIC,
 };
-let recent = { files: [], folders: [] };
 let closeHandler = null;
 
 const params = new URLSearchParams(globalThis.location?.search || '');
+const listParam = (name) => (params.get(name) || '').split(',').filter(Boolean);
+let recent = { files: listParam('recentFiles'), folders: listParam('recentFolders') };
 const isImage = (text) => typeof text === 'string' && text.startsWith('data:');
 const norm = (p) => String(p).replace(/\\/g, '/').toLowerCase();
 
 function emit(event, payload) {
   for (const cb of listeners.get(event) || []) cb(payload);
+}
+
+// The watcher reports any change inside the watched (sidebar) folder.
+function folderChanged(path) {
+  const folder = fake.watched?.folder;
+  if (folder && norm(path).startsWith(norm(folder).replace(/\/+$/, '') + '/')) {
+    setTimeout(() => emit('folder-changed', { folder }), 0);
+  }
 }
 
 function on(event, cb) {
@@ -103,13 +127,23 @@ const fake = {
   get recent() {
     return structuredClone(recent);
   },
+  listTreeCalls: 0,
   change(path, text) {
     fs[path] = text;
     emit('file-changed', { path, kind: 'modified' });
+    folderChanged(path);
   },
   remove(path) {
     delete fs[path];
     emit('file-changed', { path, kind: 'removed' });
+    folderChanged(path);
+  },
+  add(path, text) {
+    fs[path] = text;
+    folderChanged(path);
+  },
+  addRecent(path, kind) {
+    return recentAdd(path, kind);
   },
   async requestClose() {
     const allow = closeHandler ? await closeHandler() : true;
@@ -138,13 +172,22 @@ export async function writeFile(path, text /* , eol, bom */) {
   fs[path] = text;
 }
 
+// Same rules as the Rust lister: .md/.markdown files, folders only if they
+// contain some (recursively), folders named ".*" or node_modules skipped,
+// folders first then files, case-insensitive.
 export async function listTree(folder) {
-  const prefix = folder.replace(/\/+$/, '') + '/';
-  const root = { name: folder.split('/').pop() || folder, path: folder, kind: 'dir', children: [] };
-  const files = Object.keys(fs).filter((p) => p.startsWith(prefix) && /\.(md|markdown)$/i.test(p));
-  for (const file of files) {
-    let node = root;
+  fake.listTreeCalls += 1;
+  const base = String(folder).replace(/\/+$/, '') || '/';
+  if (base in fs) throw 'not a folder';
+  const prefix = base === '/' ? '/' : base + '/';
+  const inside = Object.keys(fs).filter((p) => p.startsWith(prefix));
+  if (!inside.length) throw 'folder not found';
+  const root = { name: base.split('/').pop() || base, path: folder, kind: 'dir', children: [] };
+  const skipped = (parts) => parts.slice(0, -1).some((n) => n.startsWith('.') || n === 'node_modules');
+  for (const file of inside) {
     const parts = file.slice(prefix.length).split('/');
+    if (!/\.(md|markdown)$/i.test(file) || skipped(parts)) continue;
+    let node = root;
     parts.forEach((name, i) => {
       const path = prefix + parts.slice(0, i + 1).join('/');
       if (i === parts.length - 1) {
@@ -166,7 +209,7 @@ export async function listTree(folder) {
     n.children.forEach(sort);
   };
   sort(root);
-  return { root, truncated: false };
+  return { root, truncated: params.get('truncated') === '1' };
 }
 
 export async function watch(files, folder) {
