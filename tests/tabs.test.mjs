@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   normalizePath, createState, openFile, newUntitled, setText, setMode,
   markSaved, setBanner, clearSaved, isDirty, closeTab, activate, cycle,
-  windowTitle, findByPath,
+  windowTitle, findByPath, loadFromDisk,
 } from '../src/desktop/tabs.js';
 
 const open = (s, path, text = 'x') => openFile(s, { path, text, eol: 'lf', bom: false });
@@ -136,4 +136,20 @@ test('window title', () => {
   assert.equal(windowTitle(s), 'a.md — Folio');
   s = setText(s, s.activeId, 'two');
   assert.equal(windowTitle(s), '● a.md — Folio');
+});
+
+test('loadFromDisk replaces text and savedText, takes eol/bom, keeps mode and scroll', () => {
+  let s = open(createState(), '/a.md', 'old');
+  const id = s.activeId;
+  s = setMode(s, id, 'split');
+  s = { ...s, tabs: s.tabs.map((t) => ({ ...t, scrollTop: 120 })) };
+  s = loadFromDisk(s, id, { text: 'new', eol: 'crlf', bom: true });
+  const t = active(s);
+  assert.equal(t.text, 'new');
+  assert.equal(t.savedText, 'new');
+  assert.equal(t.eol, 'crlf');
+  assert.equal(t.bom, true);
+  assert.equal(t.mode, 'split');
+  assert.equal(t.scrollTop, 120);
+  assert.equal(isDirty(t), false);
 });

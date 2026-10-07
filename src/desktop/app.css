@@ -90,6 +90,10 @@ body { overflow: hidden; }
   border-bottom: 1px solid var(--border);
 }
 .banner-error { background: var(--danger-bg); color: var(--danger-fg); }
+.banner-info { background: var(--subtle); color: var(--fg); }
+.banner-actions { flex: none; display: flex; gap: 8px; }
+.banner .btn-small { padding: 4px 12px; font-size: 13px; }
+.banner .btn-small:not(.btn-primary) { background: var(--bg); }
 .banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .banner-close {
   flex: none;

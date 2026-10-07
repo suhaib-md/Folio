@@ -5,6 +5,9 @@
 //   fs                 plain object, path -> file text (images: data URLs)
 //   emit(event, data)  fire 'open-paths', 'file-changed', 'folder-changed',
 //                      'drag-drop' (payload: paths)
+//   change(path, text) write `text` to fs[path] and fire file-changed
+//                      'modified' (as the watcher would, if path is watched)
+//   remove(path)       delete fs[path] and fire file-changed 'removed'
 //   requestClose()     simulate the window close button
 //   opened, watched, closed, recent   what the app asked for
 // URL flags: ?failWrites=1 makes writeFile reject with "permission denied";
@@ -99,6 +102,14 @@ const fake = {
   closed: false,
   get recent() {
     return structuredClone(recent);
+  },
+  change(path, text) {
+    fs[path] = text;
+    emit('file-changed', { path, kind: 'modified' });
+  },
+  remove(path) {
+    delete fs[path];
+    emit('file-changed', { path, kind: 'removed' });
   },
   async requestClose() {
     const allow = closeHandler ? await closeHandler() : true;

@@ -218,7 +218,19 @@ export function createEditor(parent, { onChange }) {
           flush();
           return;
         }
-        if (!sameDoc(view.state, text)) view.setState(newState(text));
+        if (!sameDoc(view.state, text)) {
+          // Replaced underneath (a reload from disk): keep the same line at
+          // the top (pixel offsets don't survive the new height estimates).
+          const top = view.lineBlockAtHeight(view.scrollDOM.scrollTop - view.documentPadding.top);
+          const line = view.state.doc.lineAt(top.from).number;
+          view.setState(newState(text));
+          const doc = view.state.doc;
+          if (line > 1) {
+            view.dispatch({
+              effects: EditorView.scrollIntoView(doc.line(Math.min(line, doc.lines)).from, { y: 'start' }),
+            });
+          }
+        }
         return;
       }
       park();

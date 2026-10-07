@@ -6,6 +6,7 @@ import * as T from './tabs.js';
 import { createEditor } from './editor.js';
 import { confirmSave, setModalHooks } from './modal.js';
 import { runWindowClose } from './closing.js';
+import { decide } from './reload.js';
 import { basename, resolveRelative, isMarkdownPath } from './paths.js';
 
 const renderMarkdown = createRenderer(window);
@@ -23,6 +24,7 @@ const editorEl = $('editor');
 const modeSwitch = $('mode-switch');
 const tabBanner = $('tab-banner');
 const tabBannerText = $('tab-banner-text');
+const tabBannerActions = $('tab-banner-actions');
 
 // Split re-renders the preview PREVIEW_DELAY ms after typing stops (spec:
 // 150 ms). Extension beyond the spec: when a tab's last render took longer
@@ -278,7 +280,8 @@ async function saveNow(id, as) {
   commit((s) => {
     let next = T.markSaved(s, id, saveAs ? { path, text } : { text });
     const saved = next.tabs.find((t) => t.id === id);
-    if (saved?.banner?.kind === SAVE_ERROR) next = T.setBanner(next, id, null);
+    // What we just wrote is now the file: save errors and disk banners are moot.
+    if (saved?.banner) next = T.setBanner(next, id, null);
     return next;
   });
   if (saveAs) {
@@ -359,6 +362,103 @@ function closeTab(id) {
   closeTabFlow(id).then(focusEditorIfShown, (err) => console.error('closing tab failed:', err));
 }
 
+// ---- changes on disk -----------------------------------------------------
+
+// The watcher follows the open files' paths; it is told whenever that set
+// changes (open, close, Save As). Calls are chained so they arrive in order.
+let watchKey = null;
+let watchChain = Promise.resolve();
+const currentFolder = () => null; // the sidebar (folder) comes later
+
+function syncWatch() {
+  const seen = new Map();
+  for (const t of state.tabs) {
+    if (t.path != null && !seen.has(T.normalizePath(t.path))) seen.set(T.normalizePath(t.path), t.path);
+  }
+  const files = [...seen.values()];
+  const folder = currentFolder();
+  const key = JSON.stringify([[...seen.keys()].sort(), folder]);
+  if (key === watchKey) return;
+  watchKey = key;
+  watchChain = watchChain
+    .then(() => backend.watch(files, folder))
+    .catch((err) => console.warn('watch failed:', err));
+}
+
+const DISK_CHANGED = 'disk-changed'; // "<name> changed on disk." Reload / Keep mine
+const DISK_REMOVED = 'disk-removed'; // "<name> was deleted or moved."
+const isDiskBanner = (b) => b?.kind === DISK_CHANGED || b?.kind === DISK_REMOVED;
+
+const tabsAt = (path) => {
+  const n = T.normalizePath(path);
+  return getState().tabs.filter((t) => t.path != null && T.normalizePath(t.path) === n);
+};
+const changeSeq = new Map(); // normalized path -> number of its latest event
+let changeCount = 0;
+
+async function onFileChanged({ path, kind }) {
+  if (!path || !tabsAt(path).length) return;
+  const n = T.normalizePath(path);
+  const seq = ++changeCount;
+  changeSeq.set(n, seq);
+  // A save of ours in flight (its rename is what we're hearing about): let
+  // it finish, so savedText is what it wrote.
+  const inFlight = tabsAt(path).map((t) => saving.get(t.id)).filter(Boolean);
+  if (inFlight.length) await Promise.all(inFlight.map((p) => p.catch(() => {})));
+  let disk = null;
+  if (kind !== 'removed') {
+    try {
+      disk = await backend.readFile(path);
+    } catch (err) {
+      // Mid-write, or gone again: a later event will follow.
+      console.warn(`re-reading ${path} failed:`, err);
+      return;
+    }
+  }
+  if (changeSeq.get(n) !== seq) return; // a newer event for this file wins
+  changeSeq.delete(n);
+  // tabsAt flushes typed text first, so `dirty` below is current.
+  const ids = tabsAt(path).map((t) => t.id);
+  if (!ids.length) return;
+  commit((s) => ids.reduce((acc, id) => applyChange(acc, id, kind, disk), s));
+}
+
+// One tab's reaction to a change of its file (a pure state update).
+function applyChange(s, id, kind, disk) {
+  const tab = s.tabs.find((t) => t.id === id);
+  if (!tab) return s;
+  switch (decide(tab, kind, disk?.text)) {
+    case 'ignore':
+      // Disk matches what we know: an earlier disk banner no longer applies.
+      return isDiskBanner(tab.banner) ? T.setBanner(s, id, null) : s;
+    case 'reload':
+      return T.setBanner(T.loadFromDisk(s, id, disk), id, null);
+    case 'ask':
+      return T.setBanner(s, id, { kind: DISK_CHANGED, text: `${tab.title} changed on disk.`, disk });
+    case 'removed':
+      return T.setBanner(T.clearSaved(s, id), id, { kind: DISK_REMOVED, text: `${tab.title} was deleted or moved.` });
+    default:
+      return s;
+  }
+}
+
+function answerDiskChange(reload) {
+  const tab = getActiveTab();
+  const b = tab?.banner;
+  if (!tab || b?.kind !== DISK_CHANGED) return;
+  commit((s) => {
+    // Keep mine: the disk version is now the known saved one, so the tab
+    // stays dirty and the next save overwrites it knowingly.
+    const next = reload ? T.loadFromDisk(s, tab.id, b.disk) : T.markSaved(s, tab.id, { text: b.disk.text });
+    return T.setBanner(next, tab.id, null);
+  });
+  if (showsEditor(view)) editor.focus();
+  else content.focus({ preventScroll: true });
+}
+
+$('tab-banner-reload').addEventListener('click', () => answerDiskChange(true));
+$('tab-banner-keep').addEventListener('click', () => answerDiskChange(false));
+
 // ---- rendering -----------------------------------------------------------
 
 // Only the active tab is on screen. The editor DOM is persistent: tabs swap
@@ -403,6 +503,9 @@ function renderNow() {
     }
   }
 
+  // True when the editor already shows this text (it came from typing).
+  const typed = !!tab && editorFor.id === tab.id && editorFor.text === tab.text;
+
   // Editor: detach before hiding so it can remember its scroll position.
   if (tab && showsEditor(next)) {
     editorEl.hidden = false;
@@ -439,10 +542,12 @@ function renderNow() {
     } else if (shown.text !== tab.text) {
       // Same tab, new text while visible: typing in Split is debounced; any
       // other change (e.g. a reload in Read) renders now.
-      if (next === 'split' && tab.text === editorFor.text) schedulePreview();
+      if (next === 'split' && typed) schedulePreview();
       else renderShown(tab);
     }
   }
+
+  syncWatch();
 
   const title = T.windowTitle(state);
   if (title !== lastTitle) {
@@ -451,7 +556,7 @@ function renderNow() {
   }
 }
 
-// The active tab's own banner (e.g. a save error).
+// The active tab's own banner: a save error, or a change on disk.
 function renderTabBanner(tab) {
   const b = tab?.banner;
   if (!b) {
@@ -462,6 +567,10 @@ function renderTabBanner(tab) {
     return;
   }
   if (tabBannerText.textContent !== b.text) tabBannerText.textContent = b.text;
+  const info = b.kind === DISK_CHANGED;
+  tabBanner.classList.toggle('banner-info', info);
+  tabBanner.classList.toggle('banner-error', !info);
+  tabBannerActions.hidden = !info;
   tabBanner.hidden = false;
 }
 
@@ -674,6 +783,9 @@ async function startup() {
   await backend.onOpenPaths((paths) => {
     editor.flush();
     openPaths(paths);
+  });
+  await backend.onFileChanged((change) => {
+    onFileChanged(change).catch((err) => console.error('file change failed:', err));
   });
   await backend.onDragDrop((paths) => {
     editor.flush();

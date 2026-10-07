@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use folio_core::files::{self, Eol, ReadResult};
 use folio_core::recent::{Kind, Recent};
 use folio_core::tree::{self, TreeNode};
+use folio_core::watch::{ChangeKind, WatchEvent, Watcher};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -81,6 +82,60 @@ fn list_tree(folder: String) -> Result<TreeResult, String> {
     Ok(TreeResult { root, truncated })
 }
 
+/// The file/folder watcher; None if it could not be started (the app then
+/// works without reload-on-change).
+struct WatchState(Mutex<Option<Watcher>>);
+
+#[derive(Clone, Serialize)]
+struct FileChanged {
+    path: String,
+    kind: ChangeKind,
+}
+
+#[derive(Clone, Serialize)]
+struct FolderChanged {
+    folder: String,
+}
+
+fn start_watcher(app: tauri::AppHandle) -> Option<Watcher> {
+    use tauri::Emitter;
+
+    let watcher = Watcher::new(move |event| {
+        let _ = match event {
+            WatchEvent::File { path, kind } => app.emit(
+                "file-changed",
+                FileChanged {
+                    path: path.to_string_lossy().into_owned(),
+                    kind,
+                },
+            ),
+            WatchEvent::Folder { folder } => app.emit(
+                "folder-changed",
+                FolderChanged {
+                    folder: folder.to_string_lossy().into_owned(),
+                },
+            ),
+        };
+    });
+    match watcher {
+        Ok(w) => Some(w),
+        Err(e) => {
+            eprintln!("file watcher unavailable: {e}");
+            None
+        }
+    }
+}
+
+#[tauri::command]
+fn watch(state: State<WatchState>, files: Vec<String>, folder: Option<String>) {
+    if let Some(w) = state.0.lock().unwrap().as_mut() {
+        w.set(
+            files.into_iter().map(PathBuf::from).collect(),
+            folder.map(PathBuf::from),
+        );
+    }
+}
+
 #[tauri::command]
 fn recent_get(store: State<RecentStore>) -> Recent {
     store.inner.lock().unwrap().clone()
@@ -140,6 +195,7 @@ pub fn run() {
                 path,
                 inner: Mutex::new(recent),
             });
+            app.manage(WatchState(Mutex::new(start_watcher(app.handle().clone()))));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -147,6 +203,7 @@ pub fn run() {
             read_file,
             write_file,
             list_tree,
+            watch,
             recent_get,
             recent_add,
             recent_remove

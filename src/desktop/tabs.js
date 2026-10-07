@@ -64,6 +64,10 @@ export function markSaved(state, id, { path, text }) {
     path != null ? { savedText: text, path, title: basename(path) } : { savedText: text });
 }
 
+// The file was (re)read from disk: it becomes the tab's text and saved text.
+export const loadFromDisk = (state, id, { text, eol, bom }) =>
+  update(state, id, () => ({ text, savedText: text, eol, bom }));
+
 export function activate(state, id) {
   if (!state.tabs.some((t) => t.id === id)) return state;
   return { ...state, activeId: id };
