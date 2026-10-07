@@ -69,16 +69,17 @@ window.addEventListener('dragleave', (e) => {
   dragDepth = Math.max(0, dragDepth - 1);
   if (dragDepth === 0) drop.hidden = true;
 });
+// Always cancel the default: browsers navigate the tab to a dropped link,
+// which would replace the viewer and lose the open document.
 window.addEventListener('dragover', (e) => {
-  if (isFileDrag(e)) e.preventDefault();
+  e.preventDefault();
+  if (!isFileDrag(e) && e.dataTransfer) e.dataTransfer.dropEffect = 'none';
 });
 window.addEventListener('drop', (e) => {
+  e.preventDefault();
   dragDepth = 0;
   drop.hidden = true;
-  const file = e.dataTransfer?.files?.[0];
-  if (!file) return;
-  e.preventDefault();
-  openFile(file);
+  openFile(e.dataTransfer?.files?.[0]);
 });
 
 // Heading ids are prefixed "user-content-" by the sanitiser; resolve #links.

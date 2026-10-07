@@ -61,3 +61,26 @@ test('external links open in new tab', () => {
 test('empty input', () => {
   assert.equal(render(''), '');
 });
+
+test('relative links open in new tab', () => {
+  assert.match(render('[o](other.md)'), /target="_blank"/);
+  assert.doesNotMatch(render('[m](mailto:a@b.co)'), /target=/);
+});
+
+test('unlabelled code is not auto-highlighted', () => {
+  const bare = render('```\nconst a = 1\n```');
+  assert.match(bare, /const a = 1/);
+  assert.doesNotMatch(bare, /hljs-/);
+  assert.doesNotMatch(render('```mermaid\ngraph TD\n```'), /<span/);
+});
+
+test('strips style and forms', () => {
+  const html = render([
+    '<style>body{display:none}</style>',
+    '<form action="https://e.com"><input name="pw"></form>',
+    '<div style="position:fixed;inset:0">x</div>',
+  ].join('\n\n'));
+  assert.doesNotMatch(html, /<style/i);
+  assert.doesNotMatch(html, /<form/i);
+  assert.doesNotMatch(html, /style=/i);
+});

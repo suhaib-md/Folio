@@ -12,10 +12,12 @@ export function createRenderer(win) {
       emptyLangClass: 'hljs',
       langPrefix: 'hljs language-',
       highlight(code, lang) {
+        // Unlabelled or unknown languages stay plain: auto-detection is slow
+        // on big blocks and miscolours logs, diagrams and data.
         if (lang && hljs.getLanguage(lang)) {
           return hljs.highlight(code, { language: lang }).value;
         }
-        return hljs.highlightAuto(code).value;
+        return code;
       },
     }),
     gfmHeadingId(),
@@ -23,7 +25,10 @@ export function createRenderer(win) {
 
   const purify = createDOMPurify(win);
   purify.addHook('afterSanitizeAttributes', (node) => {
-    if (node.tagName === 'A' && /^https?:/i.test(node.getAttribute('href') || '')) {
+    // Every link except in-page anchors and mailto opens in a new tab, so a
+    // click never navigates the viewer away from the open document.
+    const href = node.tagName === 'A' ? node.getAttribute('href') : null;
+    if (href && !href.startsWith('#') && !/^mailto:/i.test(href)) {
       node.setAttribute('target', '_blank');
       node.setAttribute('rel', 'noopener noreferrer');
     }
@@ -34,6 +39,11 @@ export function createRenderer(win) {
     const html = marked.parse(text.replace(/^﻿/, ''));
     // Named props are prefixed with "user-content-" so a heading like
     // "# Images" can't clobber document.images; main.js resolves #anchors.
-    return purify.sanitize(html, { SANITIZE_NAMED_PROPS: true });
+    // <style>, style="" and <form> could hide the app UI or fake a form.
+    return purify.sanitize(html, {
+      SANITIZE_NAMED_PROPS: true,
+      FORBID_TAGS: ['style', 'form'],
+      FORBID_ATTR: ['style'],
+    });
   };
 }

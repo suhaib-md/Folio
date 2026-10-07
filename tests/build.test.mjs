@@ -40,3 +40,20 @@ test('built page shows an error for binary files', async () => {
   assert.equal(error.hidden, false);
   assert.equal(error.textContent, "Couldn't read archive.zip. Is it a text/Markdown file?");
 });
+
+test('non-file drags are blocked so the page never navigates away', () => {
+  const win = load();
+  const fire = (type) => {
+    const ev = new win.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: { types: ['text/uri-list'], files: [], dropEffect: 'copy' },
+    });
+    win.dispatchEvent(ev);
+    return ev;
+  };
+  const over = fire('dragover');
+  assert.equal(over.defaultPrevented, true);
+  assert.equal(over.dataTransfer.dropEffect, 'none');
+  assert.equal(fire('drop').defaultPrevented, true);
+  assert.equal(win.document.getElementById('drop').hidden, true);
+});
