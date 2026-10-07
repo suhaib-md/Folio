@@ -53,7 +53,7 @@ const beforeSplit = new Map(); // tab id -> mode to return to when leaving Split
 // The open folder (one at a time) and the sidebar showing it.
 let folder = null; // { path, root, truncated } from list_tree
 let folderSeq = 0; // bumped when another folder is opened
-let expanded = new Set(); // folder paths expanded in the sidebar (root always is)
+let expanded = new Set(); // normalizePath() keys of expanded folders (root always is)
 let treeVersion = 0; // bumped when `folder` or `expanded` change
 let lastSidebarKey = null;
 // The user's Ctrl+B choice. Narrow windows hide the sidebar without
@@ -168,6 +168,14 @@ $('tab-banner-close').addEventListener('click', () => {
 
 // ---- opening -------------------------------------------------------------
 
+// A backend error as text (Rust errors arrive as plain strings).
+const errorText = (err) => (typeof err === 'string' ? err : err?.message || String(err));
+// The backend's exact words (folio-core files.rs / tree.rs) for a path that
+// does not exist (read_file / list_tree).
+const isNotFound = (err) => ['file not found', 'folder not found'].includes(errorText(err));
+// list_tree was given a file.
+const isNotAFolder = (err) => errorText(err) === 'not a folder';
+
 // While a modal is open, incoming opens wait and run when it closes. Opens
 // run one at a time so order is kept and duplicates focus.
 let modalOpen = false;
@@ -225,7 +233,7 @@ async function openPath(path, { fromRecent = false } = {}) {
     file = await backend.readFile(path);
   } catch (err) {
     console.warn(`readFile(${path}) failed:`, err);
-    if (fromRecent) forgetRecent(path);
+    if (fromRecent && isNotFound(err)) forgetRecent(path);
     else showOpenError(path);
     return;
   }
@@ -242,16 +250,20 @@ async function openPath(path, { fromRecent = false } = {}) {
   addRecent(path, 'file');
 }
 
-// A dropped or launched path: list_tree answers "not a folder" for a file
-// (and fails for anything unreadable), so a failed listing opens it as a
-// file, which reports its own error. An already open file skips the probe.
+// A dropped or launched path: list_tree answers "not a folder" for a file,
+// which then opens as a file (reporting its own read errors). Any other
+// listing error is a folder that could not be opened. An already open file
+// skips the probe.
 async function openFileOrFolder(path) {
   if (T.findByPath(state, path)) return openPath(path);
   let listed;
   try {
     listed = await backend.listTree(path);
-  } catch {
-    return openPath(path);
+  } catch (err) {
+    if (isNotAFolder(err)) return openPath(path);
+    console.warn(`listTree(${path}) failed:`, err);
+    showBanner(`Couldn't open ${basename(path)}.`);
+    return;
   }
   return openFolder(path, { listed });
 }
@@ -286,7 +298,7 @@ async function openFolder(path, { listed = null, fromRecent = false } = {}) {
       result = await backend.listTree(path);
     } catch (err) {
       console.warn(`listTree(${path}) failed:`, err);
-      if (fromRecent) forgetRecent(path);
+      if (fromRecent && isNotFound(err)) forgetRecent(path);
       else showBanner(`Couldn't open ${basename(path)}.`);
       return;
     }
@@ -303,8 +315,9 @@ async function openFolder(path, { listed = null, fromRecent = false } = {}) {
 }
 
 function toggleFolder(path) {
-  if (expanded.has(path)) expanded.delete(path);
-  else expanded.add(path);
+  const key = T.normalizePath(path);
+  if (expanded.has(key)) expanded.delete(key);
+  else expanded.add(key);
   treeVersion += 1;
   render();
 }
@@ -342,11 +355,14 @@ async function onFolderChanged(payload) {
       try {
         result = await backend.listTree(path);
       } catch (err) {
-        // Gone or unreadable right now: keep showing the last listing.
+        // Gone or unreadable right now: keep showing the last listing (a
+        // re-list queued meanwhile is still tried).
         console.warn(`re-listing ${path} failed:`, err);
-        break;
+        continue;
       }
-      if (seq !== folderSeq) break; // another folder was opened meanwhile
+      // Another folder was opened meanwhile: drop this result, but still
+      // honour a re-list queued for it.
+      if (seq !== folderSeq) continue;
       folder = { path, root: result.root, truncated: !!result.truncated };
       treeVersion += 1;
       render();
@@ -395,8 +411,6 @@ const SAVE_ERROR = 'save-error';
 const saving = new Map(); // tab id -> in-flight save promise
 
 const findTab = (id) => getState().tabs.find((t) => t.id === id) || null;
-const errorReason = (err) =>
-  (typeof err === 'string' ? err : err?.message || String(err));
 
 // Save the tab (Save As if it is untitled or `as` is set). Resolves true once
 // the text is on disk, false if the user cancelled the dialog or the write
@@ -440,7 +454,7 @@ async function saveNow(id, as) {
     await backend.writeFile(path, text, eol, bom);
   } catch (err) {
     console.warn(`writeFile(${path}) failed:`, err);
-    const banner = { kind: SAVE_ERROR, text: `Couldn't save ${basename(path)}: ${errorReason(err)}` };
+    const banner = { kind: SAVE_ERROR, text: `Couldn't save ${basename(path)}: ${errorText(err)}` };
     commit((s) => T.setBanner(s, id, banner));
     return false;
   }

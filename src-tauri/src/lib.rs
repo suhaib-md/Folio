@@ -66,17 +66,19 @@ fn launch_paths(pending: State<PendingOpen>) -> Vec<String> {
     pending.0.lock().unwrap().take_launch(own)
 }
 
-#[tauri::command]
+// File-system commands are async: they run on a worker thread, so a slow
+// disk or a big folder never blocks the window (the main thread).
+#[tauri::command(async)]
 fn read_file(path: String) -> Result<ReadResult, String> {
     files::read_file(Path::new(&path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn write_file(path: String, text: String, eol: Eol, bom: bool) -> Result<(), String> {
     files::write_file(Path::new(&path), &text, eol, bom)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_tree(folder: String) -> Result<TreeResult, String> {
     let (root, truncated) = tree::list_tree(Path::new(&folder), TREE_LIMIT)?;
     Ok(TreeResult { root, truncated })
@@ -126,7 +128,7 @@ fn start_watcher(app: tauri::AppHandle) -> Option<Watcher> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn watch(state: State<WatchState>, files: Vec<String>, folder: Option<String>) {
     if let Some(w) = state.0.lock().unwrap().as_mut() {
         w.set(
@@ -136,12 +138,12 @@ fn watch(state: State<WatchState>, files: Vec<String>, folder: Option<String>) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn recent_get(store: State<RecentStore>) -> Recent {
     store.inner.lock().unwrap().clone()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn recent_add(store: State<RecentStore>, path: String, kind: Kind) -> Result<Recent, String> {
     let mut guard = store.inner.lock().unwrap();
     let mut next = guard.clone();
@@ -151,7 +153,7 @@ fn recent_add(store: State<RecentStore>, path: String, kind: Kind) -> Result<Rec
     Ok(next)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn recent_remove(store: State<RecentStore>, path: String) -> Result<Recent, String> {
     let mut guard = store.inner.lock().unwrap();
     let mut next = guard.clone();

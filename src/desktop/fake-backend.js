@@ -161,7 +161,8 @@ export async function launchPaths() {
 }
 
 export async function readFile(path) {
-  if (!(path in fs)) throw 'The system cannot find the file specified. (os error 2)';
+  // Same error strings as folio-core (files.rs / tree.rs).
+  if (!(path in fs)) throw 'file not found';
   const text = fs[path];
   if (isImage(text) || text.includes('\u0000')) throw 'stream did not contain valid UTF-8';
   return { text, eol: 'lf', bom: false };

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderTree } from '../src/desktop/sidebar.js';
 import { renderRecent } from '../src/desktop/recent.js';
+import { normalizePath } from '../src/desktop/tabs.js';
 
 const root = {
   name: 'demo', path: '/demo', kind: 'dir', children: [
@@ -73,6 +74,19 @@ test('expanded set survives re-render', () => {
   assert.deepEqual(rowPaths(c), all);
   assert.equal(c.querySelector('[data-path="/demo/notes"]').getAttribute('aria-expanded'), 'true');
   assert.equal(c.querySelectorAll('.tree-row').length, all.length); // replaced, not appended
+});
+
+test('expanded holds normalised paths (case / separators may differ)', () => {
+  const { c } = setup();
+  // Expanded as "/demo/notes"; the folder reopened as "C:\\Demo" lists it
+  // as "C:\\Demo\\Notes".
+  const win = JSON.parse(JSON.stringify(root).replaceAll('/demo', 'C:\\\\Demo').replaceAll('/', '\\\\')
+    .replaceAll('Demo\\\\notes', 'Demo\\\\Notes'));
+  renderTree(c, win, opts({ expanded: new Set([normalizePath('C:/demo/notes')]) }));
+  const notes = c.querySelector('.tree-dir');
+  assert.equal(notes.dataset.path, 'C:\\Demo\\Notes');
+  assert.equal(notes.getAttribute('aria-expanded'), 'true');
+  assert.ok(rowPaths(c).includes('C:\\Demo\\Notes\\todo.md'));
 });
 
 test('truncated shows "Folder too large — showing first 5000 items"', () => {

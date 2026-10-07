@@ -1,6 +1,8 @@
 // Folder sidebar: renders a list_tree result into a container. Pure with
 // respect to app state: it takes the data and callbacks, builds the DOM, and
-// reports clicks; the caller owns `expanded` and re-renders.
+// reports clicks; the caller owns `expanded` and re-renders. `expanded` holds
+// normalizePath() keys, so case and separator differences still match;
+// onToggle/onOpen get the node's own path.
 //
 // Rows are buttons (keyboard reachable); Up/Down move between rows,
 // Right/Left expand/collapse a folder. Only expanded folders' children are
@@ -70,7 +72,7 @@ export function renderTree(container, root, { activePath, expanded, truncated, o
       label.className = 'tree-name';
       label.textContent = node.name;
       if (node.kind === 'dir') {
-        const open = expanded.has(node.path);
+        const open = expanded.has(normalizePath(node.path));
         row.setAttribute('aria-expanded', String(open));
         const twisty = d.createElement('span');
         twisty.className = 'tree-twisty';
