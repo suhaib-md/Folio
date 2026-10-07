@@ -62,3 +62,10 @@ test('isMarkdownPath', () => {
   assert.equal(isMarkdownPath('a.txt'), false);
   assert.equal(isMarkdownPath('md'), false);
 });
+
+test('resolveRelative keeps the leading \\\\ of a UNC document path', () => {
+  assert.equal(resolveRelative('\\\\server\\share\\a.md', 'img/x.png'), '\\\\server\\share\\img\\x.png');
+  assert.equal(resolveRelative('\\\\server\\share\\d\\a.md', '../b.md'), '\\\\server\\share\\b.md');
+  // The share is the root: .. never climbs above it.
+  assert.equal(resolveRelative('\\\\server\\share\\a.md', '../../b.md'), '\\\\server\\share\\b.md');
+});

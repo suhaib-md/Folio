@@ -252,7 +252,8 @@ async function openPath(path, { fromRecent = false } = {}) {
 
 // A dropped or launched path: list_tree answers "not a folder" for a file,
 // which then opens as a file (reporting its own read errors). Any other
-// listing error is a folder that could not be opened. An already open file
+// listing error is a folder that could not be opened, unless the path looks
+// like a Markdown file: that opens as a file, so its error says so. An already open file
 // skips the probe.
 async function openFileOrFolder(path) {
   if (T.findByPath(state, path)) return openPath(path);
@@ -260,7 +261,8 @@ async function openFileOrFolder(path) {
   try {
     listed = await backend.listTree(path);
   } catch (err) {
-    if (isNotAFolder(err)) return openPath(path);
+    // A Markdown file that list_tree couldn't probe gets the file error copy.
+    if (isNotAFolder(err) || isMarkdownPath(path)) return openPath(path);
     console.warn(`listTree(${path}) failed:`, err);
     showBanner(`Couldn't open ${basename(path)}.`);
     return;
@@ -929,8 +931,20 @@ $('start-open-file').addEventListener('click', pickAndOpen);
 $('start-new-file').addEventListener('click', newFile);
 $('start-open-folder').addEventListener('click', pickFolderAndOpen);
 
+// WebView2 keeps its browser accelerators in release builds: a reload would
+// wipe every tab without a prompt. Swallow them everywhere, editor included.
+function isReloadKey(e) {
+  if (e.key === 'F5' || e.key === 'BrowserRefresh') return true;
+  return e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'r';
+}
+
 // Capture phase, so the shortcuts also work (and win) inside the editor.
 window.addEventListener('keydown', (e) => {
+  if (isReloadKey(e)) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   if (!e.ctrlKey || e.metaKey) return;
   const key = e.key.toLowerCase();
   // AltGr arrives as Ctrl+Alt on Windows, and some layouts (German, French,
@@ -976,6 +990,14 @@ window.addEventListener('keydown', (e) => {
   // keys: that would turn a big document into a string on every keystroke.)
   editor.flush();
   action();
+}, true);
+
+// The native context menu offers Reload (and Back): only editable areas
+// (the editor's text, inputs) keep theirs, for cut/copy/paste.
+window.addEventListener('contextmenu', (e) => {
+  const t = e.target instanceof Element ? e.target : null;
+  if (t && t.closest('.cm-content, input, textarea, [contenteditable="true"]')) return;
+  e.preventDefault();
 }, true);
 
 // Tauri delivers dropped files as real paths (backend.onDragDrop); the

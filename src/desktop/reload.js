@@ -10,6 +10,10 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
 export function decide(tab, kind, diskText) {
   if (kind === 'removed') return 'removed';
   // Our own save (or a touch that changed nothing).
-  if (tab.savedText != null && lf(diskText) === tab.savedText) return 'ignore';
+  const disk = lf(diskText);
+  if (tab.savedText != null && disk === tab.savedText) return 'ignore';
+  // The disk already holds exactly what the tab shows (restored after a
+  // removal, or edited elsewhere to the same text): nothing to ask about.
+  if (disk === lf(tab.text)) return 'reload';
   return isDirty(tab) ? 'ask' : 'reload';
 }

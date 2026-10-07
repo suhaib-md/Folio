@@ -49,6 +49,10 @@ export function resolveRelative(docPath, href) {
   if (/^[\\/]/.test(rel)) {
     if (win) return null;
     parts = [''];
+  } else if (win && /^[\\/]{2}[^\\/]/.test(docPath)) {
+    // UNC: "\\\\server\\share" is the root, kept whole (never popped).
+    const segs = dirname(docPath).split(/[\\/]/).filter(Boolean);
+    parts = [`\\\\${segs[0]}\\${segs[1] ?? ''}`, ...segs.slice(2)];
   } else {
     // Drop empty segments after the root: dirname("/a.md") is "/", which
     // would otherwise split to ['', ''] and resolve to "//b.md".

@@ -35,7 +35,15 @@ test('CRLF-normalised disk text equal to savedText → ignore', () => {
   assert.equal(decide(tab(saved, saved), 'modified', 'line one\r\nline two\r\n'), 'ignore');
 });
 
-test('savedText null (after removed) and the file comes back → ask', () => {
-  assert.equal(decide(tab('mine', null), 'modified', 'mine'), 'ask');
+test('savedText null (after removed) and the file comes back different → ask', () => {
   assert.equal(decide(tab('mine', null), 'modified', 'other'), 'ask');
+});
+
+test('modified, diskText === current text → reload quietly (nothing to lose)', () => {
+  // Removed, then restored with the same content.
+  assert.equal(decide(tab('mine', null), 'modified', 'mine'), 'reload');
+  // Dirty tab, external edit wrote exactly what was typed.
+  assert.equal(decide(tab('typed', 'old'), 'modified', 'typed'), 'reload');
+  // CRLF disk text equal to the LF tab text.
+  assert.equal(decide(tab('a\nb\n', 'old'), 'modified', 'a\r\nb\r\n'), 'reload');
 });
