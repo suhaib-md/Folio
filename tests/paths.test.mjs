@@ -15,6 +15,12 @@ test('resolveRelative handles .. and .', () => {
   assert.equal(resolveRelative('C:\\a\\b\\doc.md', '..\\up.md'), 'C:\\a\\up.md');
 });
 
+test('resolveRelative from a document at the POSIX root', () => {
+  assert.equal(resolveRelative('/a.md', 'b.md'), '/b.md');
+  assert.equal(resolveRelative('/a.md', '../b.md'), '/b.md');
+  assert.equal(resolveRelative('/a.md', 'img/p.png'), '/img/p.png');
+});
+
 test('resolveRelative decodes percent-escapes', () => {
   assert.equal(resolveRelative('/x/a.md', '%20space.md'), '/x/ space.md');
   assert.equal(resolveRelative('/x/a.md', 'my%20notes.md'), '/x/my notes.md');

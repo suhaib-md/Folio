@@ -69,9 +69,22 @@ export function openPaths(paths) {
     return chain;
   }
   chain = chain.then(async () => {
-    for (const p of paths) await openPath(p);
+    for (const p of paths) {
+      // One bad file must not stop the rest, or leave the chain rejected
+      // (which would silently skip every later open).
+      try {
+        await openPath(p);
+      } catch (err) {
+        console.error(`opening ${p} failed:`, err);
+        showOpenError(p);
+      }
+    }
   });
   return chain;
+}
+
+function showOpenError(path) {
+  showBanner(`Couldn't open ${basename(path)}. Is it a text/Markdown file?`);
 }
 
 async function openPath(path) {
@@ -85,10 +98,18 @@ async function openPath(path) {
     file = await backend.readFile(path);
   } catch (err) {
     console.warn(`readFile(${path}) failed:`, err);
-    showBanner(`Couldn't open ${basename(path)}. Is it a text/Markdown file?`);
+    showOpenError(path);
     return;
   }
-  commit(T.openFile(state, { path, ...file }));
+  const before = state;
+  try {
+    commit(T.openFile(state, { path, ...file }));
+  } catch (err) {
+    // Don't keep a tab we couldn't show.
+    state = before;
+    render();
+    throw err;
+  }
   backend.recentAdd(path, 'file').catch((err) => console.warn('recentAdd failed:', err));
 }
 

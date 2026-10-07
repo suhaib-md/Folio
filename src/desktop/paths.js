@@ -50,7 +50,9 @@ export function resolveRelative(docPath, href) {
     if (win) return null;
     parts = [''];
   } else {
-    parts = dirname(docPath).split(/[\\/]/);
+    // Drop empty segments after the root: dirname("/a.md") is "/", which
+    // would otherwise split to ['', ''] and resolve to "//b.md".
+    parts = dirname(docPath).split(/[\\/]/).filter((seg, i) => i === 0 || seg !== '');
   }
   // parts[0] is the root ('' for POSIX "/", "C:" for Windows) and is never popped.
   for (const seg of rel.split(/[\\/]/)) {

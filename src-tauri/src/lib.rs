@@ -20,10 +20,6 @@ struct TreeResult {
     truncated: bool,
 }
 
-fn existing_paths<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
-    args.into_iter().filter(|a| Path::new(a).exists()).collect()
-}
-
 fn existing_paths_in<I: IntoIterator<Item = String>>(args: I, cwd: &Path) -> Vec<String> {
     args.into_iter()
         .map(|a| cwd.join(a))
@@ -32,9 +28,41 @@ fn existing_paths_in<I: IntoIterator<Item = String>>(args: I, cwd: &Path) -> Vec
         .collect()
 }
 
+/// Paths from second launches that arrive before the frontend is listening.
+/// The frontend subscribes to `open-paths` and then calls `launch_paths`,
+/// which marks it ready and drains anything queued here.
+#[derive(Default)]
+struct Pending {
+    ready: bool,
+    paths: Vec<String>,
+}
+
+impl Pending {
+    /// Called by `launch_paths`: returns own argv paths plus queued ones.
+    fn take_launch(&mut self, mut own: Vec<String>) -> Vec<String> {
+        self.ready = true;
+        own.append(&mut self.paths);
+        own
+    }
+
+    /// Called for a second launch: Some(paths) to emit now, None if queued.
+    fn route(&mut self, paths: Vec<String>) -> Option<Vec<String>> {
+        if self.ready {
+            Some(paths)
+        } else {
+            self.paths.extend(paths);
+            None
+        }
+    }
+}
+
+struct PendingOpen(Mutex<Pending>);
+
 #[tauri::command]
-fn launch_paths() -> Vec<String> {
-    existing_paths(std::env::args().skip(1))
+fn launch_paths(pending: State<PendingOpen>) -> Vec<String> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let own = existing_paths_in(std::env::args().skip(1), &cwd);
+    pending.0.lock().unwrap().take_launch(own)
 }
 
 #[tauri::command]
@@ -86,7 +114,13 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let paths = existing_paths_in(argv.into_iter().skip(1), Path::new(&cwd));
             if !paths.is_empty() {
-                let _ = app.emit("open-paths", paths);
+                // Hold the lock across the check and the emit so launch_paths
+                // can't mark ready in between and miss these paths.
+                let state = app.state::<PendingOpen>();
+                let mut pending = state.0.lock().unwrap();
+                if let Some(paths) = pending.route(paths) {
+                    let _ = app.emit("open-paths", paths);
+                }
             }
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
@@ -94,6 +128,7 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
+        .manage(PendingOpen(Mutex::new(Pending::default())))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -118,4 +153,37 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Folio");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn second_launch_before_ready_is_queued_then_drained() {
+        let mut p = Pending::default();
+        assert_eq!(p.route(vec!["b.md".into()]), None);
+        assert_eq!(p.route(vec!["c.md".into()]), None);
+        let got = p.take_launch(vec!["a.md".into()]);
+        assert_eq!(got, vec!["a.md", "b.md", "c.md"]);
+        assert!(p.paths.is_empty());
+    }
+
+    #[test]
+    fn second_launch_after_ready_is_emitted() {
+        let mut p = Pending::default();
+        assert!(p.take_launch(vec![]).is_empty());
+        assert_eq!(p.route(vec!["d.md".into()]), Some(vec!["d.md".to_string()]));
+        assert!(p.paths.is_empty());
+    }
+
+    #[test]
+    fn relative_argv_is_made_absolute_against_cwd() {
+        let dir = std::env::temp_dir().join(format!("folio-argv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("x.md"), "x").unwrap();
+        let got = existing_paths_in(vec!["x.md".to_string(), "missing.md".to_string()], &dir);
+        assert_eq!(got, vec![dir.join("x.md").to_string_lossy().into_owned()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
