@@ -61,3 +61,9 @@ test('non-file drags are blocked so the page never navigates away', () => {
 test('built page is named Folio before a file is opened', () => {
   assert.equal(load().document.title, 'Folio');
 });
+
+test('inline script hides closing tags from tools that inject before </body>', () => {
+  // VS Code Live Server inserts its script at the first "</body>" it finds.
+  assert.equal(html.match(/<\/body>/gi).length, 1);
+  assert.equal(html.match(/<\/head>/gi).length, 1);
+});

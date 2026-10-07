@@ -12,10 +12,12 @@ const result = await build({
   legalComments: 'none',
 });
 
-// Keep the HTML parser from ending the inline script early. "\x21" is "!"
-// and stays valid inside strings and unicode regexes ("\!" is not).
+// Keep closing tags out of the inline script: "</script" would end it early,
+// and tools like VS Code Live Server inject at the first "</body>" they see.
+// "\/" and "\x21" ("!") stay valid inside strings and unicode regexes ("\!"
+// is not). Only named tags are escaped: a bare "</" can be a regex like /</g.
 const js = result.outputFiles[0].text
-  .replace(/<\/script/gi, '<\\/script')
+  .replace(/<\/(script|body|head|html)/gi, '<\\/$1')
   .replace(/<!--/g, '<\\x21--');
 const css = await readFile('src/styles.css', 'utf8');
 const template = await readFile('src/index.html', 'utf8');
