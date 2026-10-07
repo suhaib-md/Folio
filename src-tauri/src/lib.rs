@@ -62,7 +62,12 @@ struct PendingOpen(Mutex<Pending>);
 #[tauri::command]
 fn launch_paths(pending: State<PendingOpen>) -> Vec<String> {
     let cwd = std::env::current_dir().unwrap_or_default();
-    let own = existing_paths_in(std::env::args().skip(1), &cwd);
+    let own = existing_paths_in(
+        std::env::args_os()
+            .skip(1)
+            .map(|a| a.to_string_lossy().into_owned()),
+        &cwd,
+    );
     pending.0.lock().unwrap().take_launch(own)
 }
 

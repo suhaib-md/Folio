@@ -39,7 +39,10 @@ fn walk(dir: &Path, limit: usize, count: &mut usize, truncated: &mut bool) -> Ve
                 if !skip_dir(&name) {
                     dirs.push((name, path));
                 }
-            } else if is_markdown(&name) && (ft.is_file() || path.is_file()) {
+            } else if !name.starts_with('.')
+                && is_markdown(&name)
+                && (ft.is_file() || path.is_file())
+            {
                 files.push((name, path));
             }
         }
@@ -127,13 +130,18 @@ mod tests {
         touch(&r.join("c.MD"));
         touch(&r.join("a.markdown"));
         touch(&r.join("n.txt"));
+        touch(&r.join(".notes.md"));
+        touch(&r.join("A/.hidden.md"));
 
         let (root, truncated) = list_tree(r, 100).unwrap();
         assert!(!truncated);
         assert_eq!(root.kind, "dir");
         let kids = root.children.unwrap();
         let got: Vec<(&str, &str)> = kids.iter().map(|n| (n.name.as_str(), n.kind)).collect();
-        assert_eq!(got, vec![("A", "dir"), ("a.markdown", "file"), ("c.MD", "file")]);
+        assert_eq!(
+            got,
+            vec![("A", "dir"), ("a.markdown", "file"), ("c.MD", "file")]
+        );
         let a = kids[0].children.as_ref().unwrap();
         assert_eq!(a.len(), 1);
         assert_eq!(a[0].name, "x.md");

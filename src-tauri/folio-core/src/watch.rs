@@ -37,11 +37,15 @@ pub enum WatchEvent {
 /// either separator. Removed files can't be canonicalised, so this compares
 /// spellings, not filesystem identity.
 fn key(p: &Path) -> String {
-    let s = p.to_string_lossy();
-    if cfg!(windows) {
+    key_for(&p.to_string_lossy(), cfg!(windows))
+}
+
+/// `key` without the platform switch, so both branches are tested everywhere.
+fn key_for(s: &str, windows: bool) -> String {
+    if windows {
         s.replace('/', "\\").to_lowercase()
     } else {
-        s.into_owned()
+        s.to_owned()
     }
 }
 
@@ -205,6 +209,19 @@ mod tests {
     fn append(path: &Path, text: &str) {
         let mut f = fs::OpenOptions::new().append(true).open(path).unwrap();
         f.write_all(text.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn key_folds_case_and_separators_on_windows_only() {
+        assert_eq!(
+            key_for("C:/Users/Me/Notes\\A.MD", true),
+            key_for("c:\\users\\me\\notes/a.md", true)
+        );
+        assert_eq!(key_for("C:/Users/Me/A.MD", true), "c:\\users\\me\\a.md");
+        // POSIX paths are case-sensitive and "\\" is an ordinary character.
+        assert_eq!(key_for("/home/Me/A.md", false), "/home/Me/A.md");
+        assert_ne!(key_for("/x/A.md", false), key_for("/x/a.md", false));
+        assert_ne!(key_for("/x/a\\b.md", false), key_for("/x/a/b.md", false));
     }
 
     #[test]
