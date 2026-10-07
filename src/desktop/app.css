@@ -176,3 +176,45 @@ main.content {
 }
 .panes[data-view="split"] > .editor-pane { border-right: 1px solid var(--border); }
 .editor-pane .cm-editor { height: 100%; }
+
+/* "Save changes?" modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 18vh 16px 16px;
+  background: rgb(0 0 0 / 0.32);
+}
+.modal {
+  width: 100%;
+  max-width: 420px;
+  padding: 20px 20px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.24);
+}
+.modal-title {
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.modal-actions .btn { padding: 6px 16px; font-size: 14px; }
+@media (prefers-color-scheme: dark) {
+  .modal-backdrop { background: rgb(0 0 0 / 0.55); }
+  .modal { box-shadow: 0 12px 32px rgb(0 0 0 / 0.6); }
+}

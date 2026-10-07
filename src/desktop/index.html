@@ -26,6 +26,11 @@
     <button id="app-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss">×</button>
   </div>
 
+  <div id="tab-banner" class="banner banner-error" role="alert" hidden>
+    <span id="tab-banner-text" class="banner-text"></span>
+    <button id="tab-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss">×</button>
+  </div>
+
   <div id="panes" class="panes" data-view="read">
     <div id="editor" class="editor-pane" hidden></div>
     <main id="content" class="content" tabindex="-1">
@@ -35,7 +40,7 @@
           <div class="start-actions">
             <button id="start-open-file" type="button" class="btn btn-primary" title="Open a file (Ctrl+O)">Open file</button>
             <button id="start-open-folder" type="button" class="btn" title="Open a folder (Ctrl+Shift+O)" disabled>Open folder</button>
-            <button id="start-new-file" type="button" class="btn" title="New file (Ctrl+N)" disabled>New file</button>
+            <button id="start-new-file" type="button" class="btn" title="New file (Ctrl+N)">New file</button>
           </div>
           <p>or drop a Markdown file here</p>
         </section>

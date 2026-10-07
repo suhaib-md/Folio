@@ -4,6 +4,8 @@ import { createRenderer } from '../render.js';
 import * as backend from './backend.js';
 import * as T from './tabs.js';
 import { createEditor } from './editor.js';
+import { confirmSave, setModalHooks } from './modal.js';
+import { planWindowClose } from './closing.js';
 import { basename, resolveRelative, isMarkdownPath } from './paths.js';
 
 const renderMarkdown = createRenderer(window);
@@ -19,6 +21,8 @@ const doc = $('doc');
 const panes = $('panes');
 const editorEl = $('editor');
 const modeSwitch = $('mode-switch');
+const tabBanner = $('tab-banner');
+const tabBannerText = $('tab-banner-text');
 
 // Split re-renders the preview PREVIEW_DELAY ms after typing stops (spec:
 // 150 ms). Extension beyond the spec: when a tab's last render took longer
@@ -136,10 +140,14 @@ function hideBanner() {
 }
 
 $('app-banner-close').addEventListener('click', hideBanner);
+$('tab-banner-close').addEventListener('click', () => {
+  const id = state.activeId;
+  if (id) commit((s) => T.setBanner(s, id, null));
+});
 
 // ---- opening -------------------------------------------------------------
 
-// While a modal is open (Task 6), incoming paths wait and are opened when it
+// While a modal is open, incoming paths wait and are opened when it
 // closes. Opens run one at a time so order is kept and duplicates focus.
 let modalOpen = false;
 const pending = [];
@@ -210,12 +218,143 @@ async function pickAndOpen() {
   }
 }
 
-function closeTab(id) {
-  // Task 6 adds the "Save changes?" prompt for dirty tabs.
+setModalHooks({ onOpen: () => setModalOpen(true), onClose: () => setModalOpen(false) });
+
+// ---- saving --------------------------------------------------------------
+
+const SAVE_ERROR = 'save-error';
+const saving = new Map(); // tab id -> in-flight save promise
+
+const findTab = (id) => getState().tabs.find((t) => t.id === id) || null;
+const errorReason = (err) =>
+  (typeof err === 'string' ? err : err?.message || String(err));
+
+// Save the tab (Save As if it is untitled or `as` is set). Resolves true once
+// the text is on disk, false if the user cancelled the dialog or the write
+// failed (the tab then shows `Couldn't save <name>: <reason>`).
+function save(id, { as = false } = {}) {
+  if (saving.has(id)) return saving.get(id);
+  const run = saveNow(id, as).finally(() => saving.delete(id));
+  saving.set(id, run);
+  return run;
+}
+
+async function saveNow(id, as) {
+  let tab = findTab(id);
+  if (!tab) return false;
+  let path = tab.path;
+  const saveAs = as || !path;
+  if (saveAs) {
+    // Existing files: start the dialog at the file itself (its folder);
+    // untitled tabs: "<title>.md".
+    try {
+      path = await backend.pickSavePath(tab.path || `${tab.title}.md`);
+    } catch (err) {
+      console.warn('pickSavePath failed:', err);
+      return false;
+    }
+    if (!path) return false;
+    tab = findTab(id); // the tab may have changed (or gone) meanwhile
+    if (!tab) return false;
+  }
+  // The text written is a snapshot: typing during the write keeps the tab
+  // dirty, because savedText is set to exactly what reached the disk.
+  const { text, eol, bom } = tab;
+  try {
+    await backend.writeFile(path, text, eol, bom);
+  } catch (err) {
+    console.warn(`writeFile(${path}) failed:`, err);
+    const banner = { kind: SAVE_ERROR, text: `Couldn't save ${basename(path)}: ${errorReason(err)}` };
+    commit((s) => T.setBanner(s, id, banner));
+    return false;
+  }
+  commit((s) => {
+    let next = T.markSaved(s, id, saveAs ? { path, text } : { text });
+    const saved = next.tabs.find((t) => t.id === id);
+    if (saved?.banner?.kind === SAVE_ERROR) next = T.setBanner(next, id, null);
+    return next;
+  });
+  if (saveAs) {
+    // Another clean tab showing the file we just wrote over is now stale.
+    const n = T.normalizePath(path);
+    const stale = getState().tabs.find((t) =>
+      t.id !== id && t.path != null && T.normalizePath(t.path) === n && !T.isDirty(t));
+    if (stale) closeTabNow(stale.id);
+    backend.recentAdd(path, 'file').catch((err) => console.warn('recentAdd failed:', err));
+  }
+  return true;
+}
+
+function newFile() {
+  commit((s) => T.newUntitled(s));
+  editor.focus();
+}
+
+// ---- closing -------------------------------------------------------------
+
+function closeTabNow(id) {
   commit((s) => T.closeTab(s, id));
   editor.destroyState(id);
   beforeSplit.delete(id);
   renderCost.delete(id);
+}
+
+const closing = new Map(); // tab id -> in-flight close flow
+
+// Close a tab, asking first if it has unsaved changes. Resolves true if the
+// tab is gone, false if it stays (Cancel, cancelled Save As, failed save).
+function closeTabFlow(id) {
+  if (closing.has(id)) return closing.get(id);
+  const run = closeTabFlowNow(id).finally(() => closing.delete(id));
+  closing.set(id, run);
+  return run;
+}
+
+async function closeTabFlowNow(id) {
+  for (;;) {
+    const tab = findTab(id);
+    if (!tab) return true;
+    if (!T.isDirty(tab)) break;
+    if (state.activeId !== id) commit((s) => T.activate(s, id));
+    const choice = await confirmSave(tab.title);
+    if (choice === 'cancel') return false;
+    if (choice === 'discard') break;
+    if (!(await save(id))) return false;
+    // Saved; typing during the write leaves it dirty again: ask again.
+  }
+  closeTabNow(id);
+  return true;
+}
+
+// Window close: the same prompt for each dirty tab, in order; any Cancel
+// (or failed save) keeps the window open.
+async function closeWindowFlow() {
+  for (const { id } of planWindowClose(getState())) {
+    if (!(await closeTabFlow(id))) return false;
+  }
+  return true;
+}
+
+let windowClosing = false;
+
+// Resolves true to let the window close. A second close request while one
+// is being answered (or while a tab's prompt is up) is ignored.
+async function onCloseRequested() {
+  editor.flush();
+  if (windowClosing || closing.size || modalOpen) return false;
+  windowClosing = true;
+  try {
+    return await closeWindowFlow();
+  } catch (err) {
+    console.error('close flow failed:', err);
+    return false;
+  } finally {
+    windowClosing = false;
+  }
+}
+
+function closeTab(id) {
+  closeTabFlow(id).then(focusEditorIfShown, (err) => console.error('closing tab failed:', err));
 }
 
 // ---- rendering -----------------------------------------------------------
@@ -251,6 +390,8 @@ function renderNow() {
   doc.hidden = !tab;
 
   renderTabs();
+
+  renderTabBanner(tab);
 
   if (tab) {
     filename.textContent = tab.title;
@@ -306,6 +447,20 @@ function renderNow() {
     lastTitle = title;
     backend.setTitle(title).catch((err) => console.warn('setTitle failed:', err));
   }
+}
+
+// The active tab's own banner (e.g. a save error).
+function renderTabBanner(tab) {
+  const b = tab?.banner;
+  if (!b) {
+    if (!tabBanner.hidden) {
+      tabBanner.hidden = true;
+      tabBannerText.textContent = '';
+    }
+    return;
+  }
+  if (tabBannerText.textContent !== b.text) tabBannerText.textContent = b.text;
+  tabBanner.hidden = false;
 }
 
 function renderShown(tab) {
@@ -452,6 +607,7 @@ doc.addEventListener('auxclick', (e) => {
 // ---- start screen, shortcuts, drag and drop ------------------------------
 
 $('start-open-file').addEventListener('click', pickAndOpen);
+$('start-new-file').addEventListener('click', newFile);
 
 // Capture phase, so the shortcuts also work (and win) inside the editor.
 window.addEventListener('keydown', (e) => {
@@ -464,10 +620,15 @@ window.addEventListener('keydown', (e) => {
   let action;
   if (key === 'o' && plain) {
     action = pickAndOpen;
+  } else if (key === 'n' && plain) {
+    action = newFile;
+  } else if (key === 's') {
+    action = () => {
+      if (state.activeId) save(state.activeId, { as: e.shiftKey });
+    };
   } else if (key === 'w' && plain) {
     action = () => {
       if (state.activeId) closeTab(state.activeId);
-      focusEditorIfShown();
     };
   } else if (key === 'tab') {
     action = () => {
@@ -488,6 +649,7 @@ window.addEventListener('keydown', (e) => {
   if (!action) return;
   e.preventDefault();
   e.stopPropagation();
+  if (modalOpen) return; // the modal is answered first
   // Every app shortcut sees the latest typed text. (Not done for plain typing
   // keys: that would turn a big document into a string on every keystroke.)
   editor.flush();
@@ -503,6 +665,7 @@ window.addEventListener('drop', (e) => e.preventDefault());
 
 async function startup() {
   render();
+  await backend.onCloseRequested(onCloseRequested);
   // Subscribe before asking for launch paths so a second launch that
   // arrives in between is not lost.
   // Backend events flush typed text into the model before they act on it.
