@@ -176,7 +176,11 @@ const LAZY_LENGTH = 256 * 1024;
 const PAUSE = 250;
 const MAX_WAIT = 1000;
 
-export function createEditor(parent, { onChange, onCursor = () => {} }) {
+// A paste that carries an image and no text (a screenshot) goes to
+// onPasteImage(blob) -> Promise<markdown|null>; the markdown replaces the main
+// selection, unless the user has switched tabs meanwhile. Pasting text (also
+// text together with an image, as copying from a web page gives) is untouched.
+export function createEditor(parent, { onChange, onCursor = () => {}, onPasteImage = null }) {
   const states = new Map(); // tab id -> EditorState (tabs not on screen)
   const scrolls = new Map(); // tab id -> scroll snapshot effect
   let current = null; // tab id whose state is in the view
@@ -215,6 +219,29 @@ export function createEditor(parent, { onChange, onCursor = () => {} }) {
     EditorView.lineWrapping,
     EditorView.contentAttributes.of({ 'aria-label': 'Markdown source', spellcheck: 'false' }),
     theme,
+    EditorView.domEventHandlers({
+      paste(event, v) {
+        if (!onPasteImage) return false;
+        const items = [...(event.clipboardData?.items || [])];
+        if (items.some((i) => i.kind === 'string' && i.type === 'text/plain')) return false;
+        const item = items.find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+        const blob = item?.getAsFile();
+        if (!blob) return false;
+        event.preventDefault();
+        const tabId = current;
+        Promise.resolve(onPasteImage(blob)).then((md) => {
+          if (!md || current !== tabId) return;
+          const { from, to } = v.state.selection.main;
+          v.dispatch({
+            changes: { from, to, insert: md },
+            selection: { anchor: from + md.length },
+            userEvent: 'input.paste',
+            scrollIntoView: true,
+          });
+        });
+        return true;
+      },
+    }),
     EditorView.updateListener.of((u) => {
       if (u.docChanged && current != null) changed(u.state.doc);
       if ((u.selectionSet || u.docChanged) && current != null) {

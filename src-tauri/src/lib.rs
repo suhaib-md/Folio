@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use base64::Engine;
 use folio_core::files::{self, Eol, ReadResult};
+use folio_core::image;
 use folio_core::recent::{Kind, Recent};
 use folio_core::search::{self, FileMatches};
 use folio_core::tree::{self, TreeNode};
@@ -84,6 +86,14 @@ fn read_file(path: String) -> Result<ReadResult, String> {
 #[tauri::command(async)]
 fn write_file(path: String, text: String, eol: Eol, bom: bool) -> Result<(), String> {
     files::write_file(Path::new(&path), &text, eol, bom)
+}
+
+#[tauri::command(async)]
+fn write_image(path: String, base64: String) -> Result<(), String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.trim())
+        .map_err(|_| "invalid image data".to_string())?;
+    image::write_image(Path::new(&path), &bytes)
 }
 
 #[tauri::command(async)]
@@ -246,6 +256,7 @@ pub fn run() {
             launch_paths,
             read_file,
             write_file,
+            write_image,
             list_tree,
             search_folder,
             watch,

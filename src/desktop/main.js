@@ -16,6 +16,7 @@ import { createFindBar } from './find.js';
 import { renderOutline } from './outline-view.js';
 import { extractHeadings, headingForFragment, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
 import { renderSearch, matchOrdinal } from './search.js';
+import { blobToImage, savePastedImage } from './paste-image.js';
 
 const renderMarkdown = createRenderer(window);
 const $ = (id) => document.getElementById(id);
@@ -79,7 +80,32 @@ let sidebarTab = 'files'; // 'files' | 'outline' | 'search'
 let recent = { files: [], folders: [] }; // as last returned by the backend
 let lastRecentKey = null;
 
-const editor = createEditor(editorEl, { onChange: onEditorChange, onCursor: onEditorCursor });
+const editor = createEditor(editorEl, {
+  onChange: onEditorChange,
+  onCursor: onEditorCursor,
+  onPasteImage: pasteImage,
+});
+
+// A screenshot pasted into the editor: save it next to the saved document and
+// hand the Markdown link back to the editor (null: nothing to insert, the tab
+// banner says why).
+async function pasteImage(blob) {
+  const tab = getActiveTab();
+  if (!tab) return null;
+  const id = tab.id;
+  const fail = (text) => {
+    commit((s) => T.setBanner(s, id, { kind: PASTE_ERROR, text }));
+    return null;
+  };
+  if (!tab.path) return fail('Save the file first to paste images.');
+  try {
+    const { base64, ext } = await blobToImage(blob);
+    return await savePastedImage(tab.path, base64, ext, new Date(), backend.writeImage);
+  } catch (err) {
+    console.warn('pasting an image failed:', err);
+    return fail(`Couldn't save the image: ${errorText(err)}`);
+  }
+}
 
 // ---- state ---------------------------------------------------------------
 
@@ -452,6 +478,7 @@ setModalHooks({ onOpen: () => setModalOpen(true), onClose: () => setModalOpen(fa
 // ---- saving --------------------------------------------------------------
 
 const SAVE_ERROR = 'save-error';
+const PASTE_ERROR = 'paste-error';
 const saving = new Map(); // tab id -> in-flight save promise
 
 const findTab = (id) => getState().tabs.find((t) => t.id === id) || null;

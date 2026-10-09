@@ -17,7 +17,8 @@
 //   listTreeCalls      number of listTree calls so far
 //   requestClose()     simulate the window close button
 //   opened, watched, closed, recent   what the app asked for
-// URL flags: ?failWrites=1 makes writeFile reject with "permission denied";
+// URL flags: ?failWrites=1 makes writeFile and writeImage reject with
+// "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
 // ?truncated=1 makes listTree report a truncated tree;
 // ?searchLimit=N sets the searchFolder match limit (default 1000);
@@ -172,6 +173,21 @@ export async function readFile(path) {
 export async function writeFile(path, text /* , eol, bom */) {
   if (params.get('failWrites') === '1') throw 'permission denied';
   fs[path] = text;
+}
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
+const MIME = { jpg: 'jpeg', svg: 'svg+xml', ico: 'x-icon' };
+
+// Same checks and error strings as folio-core image.rs. Stored as a data URL
+// (like the demo picture) so assetUrl can show it.
+export async function writeImage(path, base64) {
+  const m = IMAGE_EXT.exec(path);
+  if (!m) throw 'not an image file';
+  if (params.get('failWrites') === '1') throw 'permission denied';
+  if (path in fs) throw 'already exists';
+  const ext = m[1].toLowerCase();
+  fs[path] = `data:image/${MIME[ext] || ext};base64,${base64}`;
+  folderChanged(path);
 }
 
 // Same rules as the Rust lister: .md/.markdown files, folders only if they
