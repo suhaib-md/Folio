@@ -88,9 +88,32 @@ test('reference links, autolinks, bare urls, nested brackets', () => {
 test('adversarial inputs stay linear', () => {
   const five = 5 * 1024 * 1024;
   const rep = (u) => u.repeat(Math.ceil(five / u.length));
-  for (const unit of ['<a ', '<a:', 'if a<b then ', '](a ', '](a "', '][', '[x](', '<a b=', '`', '\\[', 'http://', '<a b="c" ']) {
+  for (const unit of ['<a ', '<a:', 'if a<b then ', '](a ', '](a "', '][', '[x](', '<a b=', '`', '\\[', 'http://', '<a b="c" ', 'a`b``c```d ', '` ', '`` x ']) {
     const text = rep(unit);
-    const ms = bestOf(2, () => countWords(text));
+    const ms = bestOf(3, () => countWords(text));
     assert.ok(ms < budget(500), `${JSON.stringify(unit)} took ${ms.toFixed(0)} ms`);
   }
+});
+
+test('backtick runs stay inline and linear', () => {
+  // 'x ' + backticks is one paragraph (a bare backtick line would be a fence).
+  const mk = (n) => 'x ' + '`'.repeat(n);
+  assert.equal(countWords(mk(10)), 1);
+  const N = 10000;
+  const small = mk(N);
+  const big = mk(4 * N);
+  const t1 = bestOf(3, () => countWords(small));
+  const t4 = bestOf(3, () => countWords(big));
+  assert.ok(t4 < 8 * Math.max(t1, 1), `N: ${t1.toFixed(1)} ms, 4N: ${t4.toFixed(1)} ms`);
+  const huge = bestOf(2, () => countWords(mk(5 * 1024 * 1024)));
+  assert.ok(huge < budget(500), `5 MB took ${huge.toFixed(0)} ms`);
+  // runs of every length, none matching
+  let ramp = 'x ';
+  for (let i = 1; ramp.length < 2 * 1024 * 1024; i++) ramp += '`'.repeat(i) + ' w ';
+  assert.ok(bestOf(2, () => countWords(ramp)) < budget(500));
+  // semantics
+  assert.equal(countWords('a `` b ` c `` d'), 4);
+  assert.equal(countWords('`one two` and ``three four``'), 5);
+  assert.equal(countWords('``a ` b`` c'), 3);
+  assert.equal(countWords('`unclosed words'), 2);
 });

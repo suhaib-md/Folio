@@ -33,24 +33,47 @@ const TARGET = new RegExp([
   String.raw`\b(?:https?:\/\/|www\.)[^\s<>)\]]+`,
 ].join('|'), 'gi');
 const NEEDS_CLEAN = /[\]\\<]|:\/\/|www\./i;
-const CODE_SPAN = /(`+)([^`]+)\1(?!`)/g;
 
 function cleanProse(s) {
   if (!NEEDS_CLEAN.test(s)) return s;
   return s.replace(TARGET, ' ');
 }
 
+// Code span content counts verbatim; only the prose around it is cleaned.
+// A span opens at a run of N backticks and closes at the next run of exactly
+// N (CommonMark); an opener with no such run is literal. Linear: runs are
+// found once, and per-length cursors only move forward (an opener never needs
+// a closer before itself).
 function countInline(s) {
   if (s.indexOf('`') === -1) return countIn(cleanProse(s));
-  // Code span content counts verbatim; only the prose around it is cleaned.
+  const starts = [];
+  const lens = [];
+  const byLen = new Map(); // run length -> indexes of runs of that length
+  for (let i = s.indexOf('`'); i !== -1;) {
+    let j = i + 1;
+    while (s.charCodeAt(j) === 96) j++;
+    const k = starts.length;
+    starts.push(i);
+    lens.push(j - i);
+    const list = byLen.get(j - i);
+    if (list) list.push(k);
+    else byLen.set(j - i, [k]);
+    i = s.indexOf('`', j);
+  }
+  const cursor = new Map();
   let n = 0;
   let last = 0;
-  CODE_SPAN.lastIndex = 0;
-  let m;
-  while ((m = CODE_SPAN.exec(s)) !== null) {
-    n += countIn(cleanProse(s.slice(last, m.index)));
-    n += countIn(m[2]);
-    last = m.index + m[0].length;
+  for (let k = 0; k < starts.length; k++) {
+    const list = byLen.get(lens[k]);
+    let c = cursor.get(lens[k]) || 0;
+    while (c < list.length && list[c] <= k) c++;
+    cursor.set(lens[k], c);
+    if (c === list.length) continue; // no closer: literal backticks
+    const close = list[c];
+    n += countIn(cleanProse(s.slice(last, starts[k])));
+    n += countIn(s.slice(starts[k] + lens[k], starts[close]));
+    last = starts[close] + lens[close];
+    k = close;
   }
   return n + countIn(cleanProse(s.slice(last)));
 }
