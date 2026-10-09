@@ -1,14 +1,17 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use folio_core::files::{self, Eol, ReadResult};
 use folio_core::recent::{Kind, Recent};
+use folio_core::search::{self, FileMatches};
 use folio_core::tree::{self, TreeNode};
 use folio_core::watch::{ChangeKind, WatchEvent, Watcher};
 use serde::Serialize;
 use tauri::{Manager, State};
 
 const TREE_LIMIT: usize = 5000;
+const SEARCH_LIMIT: usize = 1000;
 
 struct RecentStore {
     path: PathBuf,
@@ -87,6 +90,37 @@ fn write_file(path: String, text: String, eol: Eol, bom: bool) -> Result<(), Str
 fn list_tree(folder: String) -> Result<TreeResult, String> {
     let (root, truncated) = tree::list_tree(Path::new(&folder), TREE_LIMIT)?;
     Ok(TreeResult { root, truncated })
+}
+
+/// Id of the newest `search_folder` request; older running searches see it
+/// change and stop.
+#[derive(Default)]
+struct LatestSearch(AtomicU64);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchReply {
+    request_id: u64,
+    files: Vec<FileMatches>,
+    truncated: bool,
+}
+
+#[tauri::command(async)]
+fn search_folder(
+    latest: State<LatestSearch>,
+    folder: String,
+    query: String,
+    match_case: bool,
+    request_id: u64,
+) -> Result<SearchReply, String> {
+    latest.0.store(request_id, Ordering::SeqCst);
+    let cancel = || latest.0.load(Ordering::SeqCst) != request_id;
+    let r = search::search_folder(Path::new(&folder), &query, match_case, SEARCH_LIMIT, &cancel)?;
+    Ok(SearchReply {
+        request_id,
+        files: r.files,
+        truncated: r.truncated,
+    })
 }
 
 /// The file/folder watcher; None if it could not be started (the app then
@@ -191,6 +225,7 @@ pub fn run() {
             }
         }))
         .manage(PendingOpen(Mutex::new(Pending::default())))
+        .manage(LatestSearch::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -210,6 +245,7 @@ pub fn run() {
             read_file,
             write_file,
             list_tree,
+            search_folder,
             watch,
             recent_get,
             recent_add,

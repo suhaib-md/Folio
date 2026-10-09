@@ -20,6 +20,7 @@
 // URL flags: ?failWrites=1 makes writeFile reject with "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
 // ?truncated=1 makes listTree report a truncated tree;
+// ?searchLimit=N sets the searchFolder match limit (default 1000);
 // ?recentFiles=/a.md,/b.md and ?recentFolders=/x seed the recent lists
 // (paths need not exist).
 
@@ -211,6 +212,114 @@ export async function listTree(folder) {
   };
   sort(root);
   return { root, truncated: params.get('truncated') === '1' };
+}
+
+// Same rules as folio-core search.rs: tree skip rules and order, plain
+// substring matching on code points, 200-char windows around each match.
+const SEARCH_WINDOW = 200;
+const SEARCH_LEAD = 60;
+let latestSearch = 0;
+const foldChar = (c) => {
+  const l = c.toLowerCase();
+  return [...l].length === 1 ? l : c;
+};
+
+function lineMatches(lineNo, rawLine, query, matchCase, out, limit, total) {
+  const chars = [...rawLine.replace(/\r+$/, '')];
+  const q = query.length;
+  const hay = matchCase ? chars : chars.map(foldChar);
+  let i = 0;
+  while (i + q <= hay.length) {
+    let ok = true;
+    for (let k = 0; k < q; k++) {
+      if (hay[i + k] !== query[k]) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) {
+      i += 1;
+      continue;
+    }
+    if (total.n >= limit) return true;
+    total.n += 1;
+    let ws = 0;
+    let we = chars.length;
+    if (chars.length > SEARCH_WINDOW) {
+      ws =
+        q >= SEARCH_WINDOW
+          ? i
+          : Math.min(Math.max(i - SEARCH_LEAD, 0, i + q - SEARCH_WINDOW), chars.length - SEARCH_WINDOW);
+      we = Math.min(ws + SEARCH_WINDOW, chars.length);
+    }
+    out.push({
+      line: lineNo,
+      text: chars.slice(ws, we).join(''),
+      start: i - ws,
+      end: Math.min(i + q - ws, we - ws),
+    });
+    i += q;
+  }
+  return false;
+}
+
+export async function searchFolder(folder, query, matchCase, requestId) {
+  latestSearch = requestId;
+  const cancelled = () => latestSearch !== requestId;
+  await Promise.resolve(); // keep the async shape: a newer call can overtake
+  if (cancelled()) throw 'cancelled';
+  if (!query) return { requestId, files: [], truncated: false };
+  const limit = Number(params.get('searchLimit')) || 1000;
+  const q = [...query].map((c) => (matchCase ? c : foldChar(c)));
+  const base = String(folder).replace(/\/+$/, '') || '/';
+  const prefix = base === '/' ? '/' : base + '/';
+  const key = (s) => [s.toLowerCase(), s];
+  const cmp = (a, b) => {
+    const [la, ra] = key(a);
+    const [lb, rb] = key(b);
+    return la < lb ? -1 : la > lb ? 1 : ra < rb ? -1 : ra > rb ? 1 : 0;
+  };
+  // Order like the tree: per folder, subfolders first, then files.
+  const orderIn = (paths, pre) => {
+    const dirs = new Map();
+    const files = [];
+    for (const p of paths) {
+      const rest = p.slice(pre.length).split('/');
+      if (rest.length === 1) files.push(p);
+      else {
+        if (!dirs.has(rest[0])) dirs.set(rest[0], []);
+        dirs.get(rest[0]).push(p);
+      }
+    }
+    const out = [];
+    for (const name of [...dirs.keys()].sort(cmp)) out.push(...orderIn(dirs.get(name), pre + name + '/'));
+    return out.concat(files.sort((a, b) => cmp(a.split('/').pop(), b.split('/').pop())));
+  };
+  const skipped = (parts) =>
+    parts.slice(0, -1).some((n) => n.startsWith('.') || n === 'node_modules') || parts[parts.length - 1].startsWith('.');
+  const candidates = Object.keys(fs).filter((p) => {
+    if (!p.startsWith(prefix) || !/\.(md|markdown)$/i.test(p)) return false;
+    return !skipped(p.slice(prefix.length).split('/'));
+  });
+  const files = [];
+  const total = { n: 0 };
+  let truncated = false;
+  for (const path of orderIn(candidates, prefix)) {
+    if (cancelled()) throw 'cancelled';
+    const text = fs[path];
+    if (isImage(text) || text.includes('\u0000')) continue;
+    const matches = [];
+    const lines = text.replace(/\r\n/g, '\n').split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (lineMatches(i + 1, lines[i], q, matchCase, matches, limit, total)) {
+        truncated = true;
+        break;
+      }
+    }
+    if (matches.length) files.push({ path, matches });
+    if (truncated) break;
+  }
+  return { requestId, files, truncated };
 }
 
 export async function watch(files, folder) {

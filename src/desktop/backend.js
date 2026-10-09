@@ -18,6 +18,8 @@ const real = {
   readFile: (path) => invoke('read_file', { path }),
   writeFile: (path, text, eol, bom) => invoke('write_file', { path, text, eol, bom }),
   listTree: (folder) => invoke('list_tree', { folder }),
+  searchFolder: (folder, query, matchCase, requestId) =>
+    invoke('search_folder', { folder, query, matchCase, requestId }),
   watch: (files, folder) => invoke('watch', { files, folder }),
   recentGet: () => invoke('recent_get'),
   recentAdd: (path, kind) => invoke('recent_add', { path, kind }),
@@ -64,6 +66,8 @@ export const launchPaths = () => impl.launchPaths();
 export const readFile = (path) => impl.readFile(path);
 export const writeFile = (path, text, eol, bom) => impl.writeFile(path, text, eol, bom);
 export const listTree = (folder) => impl.listTree(folder);
+export const searchFolder = (folder, query, matchCase, requestId) =>
+  impl.searchFolder(folder, query, matchCase, requestId);
 export const watch = (files, folder) => impl.watch(files, folder);
 export const recentGet = () => impl.recentGet();
 export const recentAdd = (path, kind) => impl.recentAdd(path, kind);
