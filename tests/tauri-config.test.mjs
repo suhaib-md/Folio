@@ -39,3 +39,29 @@ test('security', () => {
   const exts = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
   for (const s of scope) assert.match(s, exts, `scope entry without image extension: ${s}`);
 });
+
+const workflow = readFileSync(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
+const releaseJob = workflow.slice(workflow.indexOf('\n  release:'));
+
+test('endpoint is the latest.json url', () => {
+  const u = conf.plugins.updater;
+  assert.deepEqual(u.endpoints, ['https://github.com/suhaib-md/Folio/releases/latest/download/latest.json']);
+  assert.equal(typeof u.pubkey, 'string'); // empty until the user supplies one
+  assert.equal(u.windows.installMode, 'passive');
+});
+
+test('updater artifacts are off in the file (non-tag builds have no signing key)', () => {
+  assert.ok(!conf.bundle.createUpdaterArtifacts);
+});
+
+test('release job args enable updater artifacts', () => {
+  assert.match(releaseJob, /createUpdaterArtifacts/);
+  assert.match(releaseJob, /includeUpdaterJson:\s*true/);
+  assert.match(releaseJob, /TAURI_SIGNING_PRIVATE_KEY:\s*\$\{\{\s*secrets\.TAURI_SIGNING_PRIVATE_KEY\s*\}\}/);
+  assert.match(releaseJob, /TAURI_SIGNING_PRIVATE_KEY_PASSWORD:\s*\$\{\{\s*secrets\.TAURI_SIGNING_PRIVATE_KEY_PASSWORD\s*\}\}/);
+  assert.match(releaseJob, /releaseDraft:\s*true/);
+});
+
+test('release job needs test and windows', () => {
+  assert.match(releaseJob, /needs:\s*\[\s*test\s*,\s*windows\s*\]/);
+});

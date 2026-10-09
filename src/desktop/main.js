@@ -6,6 +6,7 @@ import * as T from './tabs.js';
 import { createEditor } from './editor.js';
 import { confirmSave, confirmAction, setModalHooks } from './modal.js';
 import { runWindowClose } from './closing.js';
+import { createUpdater } from './updater.js';
 import { decide } from './reload.js';
 import { basename, dirname, resolveRelative, isMarkdownPath } from './paths.js';
 import { renderTree } from './sidebar.js';
@@ -37,6 +38,7 @@ const filename = $('filename');
 const wordcountEl = $('wordcount');
 const banner = $('app-banner');
 const bannerText = $('app-banner-text');
+const bannerActions = $('app-banner-actions');
 const content = $('content');
 const start = $('start');
 const doc = $('doc');
@@ -220,6 +222,16 @@ function syncAutosave() {
 }
 settings.onChange(syncAutosave);
 
+const updater = createUpdater({
+  backend,
+  appInfo: () => backend.appInfo(),
+  runCloseFlow: () => prepareToExit(),
+  showBanner: (text, { actions } = {}) => showBanner(text, 'info', actions),
+  hideBanner: () => hideBanner(),
+  notify: (text, kind) => showBanner(text, kind === 'error' ? 'error' : 'info'),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+});
+
 let appVersion = '';
 async function showAbout() {
   try {
@@ -315,6 +327,7 @@ function moreMenuItems() {
     { label: 'Export HTML…', disabled: !hasDoc, onSelect: exportHtml },
     { label: 'Print…', disabled: !hasDoc, onSelect: printDoc },
     'separator',
+    { label: 'Check for updates…', onSelect: () => updater.checkNow() },
     { label: 'About Folio', onSelect: showAbout },
   ];
 }
@@ -374,8 +387,20 @@ roomy.addEventListener('change', () => render());
 
 // ---- app banner ----------------------------------------------------------
 
-function showBanner(message, kind = 'error') {
+// actions: optional [{ label, primary, onSelect }] buttons next to the text.
+function showBanner(message, kind = 'error', actions = []) {
   bannerText.textContent = message;
+  bannerActions.replaceChildren(
+    ...actions.map((a) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = a.primary ? 'btn btn-small btn-primary' : 'btn btn-small';
+      b.textContent = a.label;
+      b.addEventListener('click', () => a.onSelect());
+      return b;
+    }),
+  );
+  bannerActions.hidden = !actions.length;
   banner.classList.toggle('banner-error', kind !== 'info');
   banner.classList.toggle('banner-info', kind === 'info');
   banner.setAttribute('role', kind === 'info' ? 'status' : 'alert');
@@ -385,6 +410,8 @@ function showBanner(message, kind = 'error') {
 function hideBanner() {
   banner.hidden = true;
   bannerText.textContent = '';
+  bannerActions.replaceChildren();
+  bannerActions.hidden = true;
 }
 
 $('app-banner-close').addEventListener('click', hideBanner);
@@ -1099,9 +1126,11 @@ const closeWindowFlow = () => runWindowClose({ getState, closeTabFlow });
 
 let windowClosing = false;
 
-// Resolves true to let the window close. A second close request while one
-// is being answered (or while a tab's prompt is up) is ignored.
-async function onCloseRequested() {
+// Resolves true to let the window close (or, for an update, to restart the
+// app): everything is answered and saved. A second request while one is
+// being answered (or while a tab's prompt is up) is ignored (false).
+// It never closes the window itself.
+async function prepareToExit() {
   editor.flush();
   if (windowClosing || closing.size || modalOpen) return false;
   windowClosing = true;
@@ -1128,6 +1157,8 @@ async function onCloseRequested() {
     }
   }
 }
+
+const onCloseRequested = prepareToExit;
 
 function closeTab(id) {
   closeTabFlow(id).then(focusEditorIfShown, (err) => console.error('closing tab failed:', err));
@@ -2383,6 +2414,7 @@ async function startup() {
   await restoring;
   await restoringSession;
   await openPaths(await backend.launchPaths(), { folders: true });
+  updater.scheduleStartupCheck();
 }
 
 startup().catch((err) => console.error('Folio failed to start:', err));

@@ -9,6 +9,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch as relaunchApp } from '@tauri-apps/plugin-process';
 import * as fake from './fake-backend.js';
 
 const MARKDOWN_FILTER = { name: 'Markdown', extensions: ['md', 'markdown'] };
@@ -57,6 +59,29 @@ const real = {
     return (await save({ defaultPath: defaultName, filters: [HTML_FILTER] })) || null;
   },
   openExternal: (url) => openUrl(url),
+  // { version, install(onProgress) } or null. Only works once the updater
+  // plugin is registered (a public key in tauri.conf.json); callers check
+  // appInfo().updaterConfigured first. onProgress gets a 0..1 fraction, or
+  // null when the download size is unknown.
+  async checkUpdate() {
+    const update = await check();
+    if (!update) return null;
+    return {
+      version: update.version,
+      install: (onProgress) => {
+        let total = 0;
+        let done = 0;
+        return update.downloadAndInstall((e) => {
+          if (e.event === 'Started') total = e.data.contentLength || 0;
+          else if (e.event === 'Progress') {
+            done += e.data.chunkLength;
+            onProgress(total ? done / total : null);
+          }
+        });
+      },
+    };
+  },
+  relaunch: () => relaunchApp(),
   assetUrl: (path) => convertFileSrc(path),
 
   onOpenPaths: (cb) => listen('open-paths', (e) => cb(e.payload)),
@@ -112,6 +137,8 @@ export const pickFolder = () => impl.pickFolder();
 export const pickSavePath = (defaultName) => impl.pickSavePath(defaultName);
 export const pickExportPath = (defaultName) => impl.pickExportPath(defaultName);
 export const openExternal = (url) => impl.openExternal(url);
+export const checkUpdate = () => impl.checkUpdate();
+export const relaunch = () => impl.relaunch();
 export const assetUrl = (path) => impl.assetUrl(path);
 export const onOpenPaths = (cb) => impl.onOpenPaths(cb);
 export const onFileChanged = (cb) => impl.onFileChanged(cb);

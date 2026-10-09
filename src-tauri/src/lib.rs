@@ -272,6 +272,17 @@ fn settings_set(store: State<SettingsStore>, settings: Settings) -> Result<(), S
     Ok(())
 }
 
+/// Whether the updater and process plugins were registered: only when
+/// `plugins.updater.pubkey` in tauri.conf.json is non-empty.
+struct UpdaterConfigured(bool);
+
+fn pubkey_configured(updater_config: Option<&serde_json::Value>) -> bool {
+    updater_config
+        .and_then(|c| c.get("pubkey"))
+        .and_then(|k| k.as_str())
+        .is_some_and(|k| !k.trim().is_empty())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppInfo {
@@ -280,10 +291,10 @@ struct AppInfo {
 }
 
 #[tauri::command]
-fn app_info(app: tauri::AppHandle) -> AppInfo {
+fn app_info(app: tauri::AppHandle, updater: State<UpdaterConfigured>) -> AppInfo {
     AppInfo {
         version: app.package_info().version.to_string(),
-        updater_configured: false,
+        updater_configured: updater.0,
     }
 }
 
@@ -332,6 +343,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // The updater refuses to start without a public key, so both
+            // plugins are only registered once the key is in the config.
+            let configured = pubkey_configured(app.config().plugins.0.get("updater"));
+            if configured {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+            }
+            app.manage(UpdaterConfigured(configured));
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
             app.manage(DraftStore {
@@ -382,6 +401,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updater_needs_a_non_empty_pubkey() {
+        use serde_json::json;
+        assert!(!pubkey_configured(None));
+        assert!(!pubkey_configured(Some(&json!({ "endpoints": [] }))));
+        assert!(!pubkey_configured(Some(&json!({ "pubkey": "" }))));
+        assert!(!pubkey_configured(Some(&json!({ "pubkey": "  " }))));
+        assert!(!pubkey_configured(Some(&json!({ "pubkey": 5 }))));
+        assert!(pubkey_configured(Some(&json!({ "pubkey": "abc" }))));
+    }
 
     #[test]
     fn second_launch_before_ready_is_queued_then_drained() {

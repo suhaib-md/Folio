@@ -25,6 +25,7 @@
 //   exportPath         set to a path (or null to cancel) to answer the Export
 //                      HTML save dialog; unset it answers /demo/<default name>
 //   exportDefaultName  the default name the last export dialog was given
+//   relaunched         true once relaunch() was called (Install and restart)
 //   failWrites         (get/set) writes reject with "permission denied"
 //   dirs               Set of folders created by createDir (folders otherwise
 //                      exist only through the files in them)
@@ -196,6 +197,7 @@ const fake = {
   dirs: new Set(),
   trashed: [],
   revealed: [],
+  relaunched: false,
   change(path, text) {
     fs[path] = text;
     emit('file-changed', { path, kind: 'modified' });
@@ -248,8 +250,29 @@ export async function settingsSet(settings) {
   }
 }
 
+// ?update=<version> simulates a configured updater with that version
+// available; without it the updater is "not configured".
+const updateVersion = params.get('update') || '';
+
 export async function appInfo() {
-  return { version: '0.3.0-dev', updaterConfigured: false };
+  return { version: '0.3.0-dev', updaterConfigured: !!updateVersion };
+}
+
+export async function checkUpdate() {
+  if (!updateVersion) return null;
+  return {
+    version: updateVersion,
+    install: async (onProgress) => {
+      for (const f of [0.1, 0.42, 1]) {
+        await new Promise((r) => setTimeout(r, 400));
+        onProgress(f);
+      }
+    },
+  };
+}
+
+export async function relaunch() {
+  fake.relaunched = true;
 }
 
 export async function readFile(path) {
