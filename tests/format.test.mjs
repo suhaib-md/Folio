@@ -81,3 +81,36 @@ test('link with multiple ranges', () => {
   const r = insertLink('aa bb', [{ from: 0, to: 2 }, { from: 3, to: 5 }]);
   assert.deepEqual(apply('aa bb', r), ['[aa](url) [bb](url)', ['url', 'url']]);
 });
+
+test('does not unwrap markers belonging to different spans', () => {
+  const b = '**a** and **b**';
+  const rb = toggleWrap(b, [{ from: 0, to: b.length }], '**');
+  assert.deepEqual(apply(b, rb), ['****a** and **b****', [b]]);
+  const i = '*a* and *b*';
+  const ri = toggleWrap(i, [{ from: 0, to: i.length }], '*');
+  assert.deepEqual(apply(i, ri), ['**a* and *b**', [i]]);
+});
+
+test('outside markers of two spans: plain text between merges them', () => {
+  const d = '**a** b **c**';
+  assert.deepEqual(apply(d, toggleWrap(d, [{ from: 5, to: 8 }], '**')), ['**a b c**', [' b ']]);
+});
+
+test('touching ranges stay well formed', () => {
+  const stars = (t) => (t.match(/\*/g) || []).length;
+  const d = '**aa**bb**';
+  const r = toggleWrap(d, [{ from: 2, to: 4 }, { from: 4, to: 10 }], '**');
+  const [t, sel] = apply(d, r);
+  assert.equal(stars(t) % 2, 0, t);
+  assert.ok(r.ranges.every((x) => x.to > x.from), JSON.stringify(r.ranges));
+  assert.equal(sel[0], 'aa');
+  const d2 = '*aa*';
+  const r2 = toggleWrap(d2, [{ from: 1, to: 3 }, { from: 3, to: 4 }], '*');
+  const [t2, sel2] = apply(d2, r2);
+  assert.equal(stars(t2) % 2, 0, t2);
+  assert.deepEqual(sel2, ['aa', '*']);
+});
+
+test('"****" fully selected is wrapped, not unwrapped', () => {
+  assert.deepEqual(apply('****', toggleWrap('****', [{ from: 0, to: 4 }], '**')), ['********', ['****']]);
+});

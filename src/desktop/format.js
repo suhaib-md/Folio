@@ -15,11 +15,19 @@ const runAfter = (doc, i) => {
   return n;
 };
 
-// Are the markers just inside the range ("**x**" selected) a `marker` pair?
+// Does `text` hold a marker run of its own (a "**" for bold, an odd run of
+// "*" for italic)? Then markers around it may belong to different spans.
+function hasOwnMarker(text, marker) {
+  if (marker !== '*') return text.includes(marker);
+  return (text.match(/\*+/g) || []).some((run) => run.length % 2 === 1);
+}
+
+// Are the markers just inside the range ("**x**" selected) one `marker` pair?
 // Italic must not mistake the halves of "**": it needs an odd run of stars.
 function insideMarked(text, marker) {
   const m = marker.length;
   if (text.length <= 2 * m || !text.startsWith(marker) || !text.endsWith(marker)) return false;
+  if (hasOwnMarker(text.slice(m, text.length - m), marker)) return false;
   if (marker !== '*') return true;
   const lead = runAfter(text, 0);
   const trail = text.length - text.replace(/\*+$/, '').length;
@@ -32,6 +40,7 @@ function outsideMarked(doc, from, to, marker) {
   if (from < m || doc.slice(from - m, from) !== marker || doc.slice(to, to + m) !== marker) {
     return false;
   }
+  if (hasOwnMarker(doc.slice(from, to), marker)) return false;
   if (marker !== '*') return true;
   return runBefore(doc, from) % 2 === 1 && runAfter(doc, to) % 2 === 1;
 }
@@ -42,7 +51,9 @@ export function toggleWrap(doc, ranges, marker) {
   const out = [];
   let delta = 0; // net length change of everything before the current range
   let lastEnd = 0; // end of the previous edit, original coordinates
-  for (const { from, to } of ranges) {
+  for (let i = 0; i < ranges.length; i++) {
+    const { from, to } = ranges[i];
+    const next = ranges[i + 1];
     if (from === to) {
       changes.push({ from, to, insert: marker + marker });
       out.push({ from: from + delta + m, to: from + delta + m });
@@ -53,7 +64,7 @@ export function toggleWrap(doc, ranges, marker) {
       out.push({ from: from + delta, to: to + delta - 2 * m });
       delta -= 2 * m;
       lastEnd = to;
-    } else if (from - m >= lastEnd && outsideMarked(doc, from, to, marker)) {
+    } else if (from - m >= lastEnd && (!next || to + m <= next.from) && outsideMarked(doc, from, to, marker)) {
       changes.push({ from: from - m, to: from, insert: '' }, { from: to, to: to + m, insert: '' });
       out.push({ from: from - m + delta, to: to - m + delta });
       delta -= 2 * m;
