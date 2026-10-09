@@ -10,6 +10,7 @@ import { decide } from './reload.js';
 import { basename, resolveRelative, isMarkdownPath } from './paths.js';
 import { renderTree } from './sidebar.js';
 import { renderRecent } from './recent.js';
+import { createFindBar } from './find.js';
 import { renderOutline } from './outline-view.js';
 import { extractHeadings, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
 
@@ -23,6 +24,7 @@ const bannerText = $('app-banner-text');
 const content = $('content');
 const start = $('start');
 const doc = $('doc');
+const find = createFindBar($('find'), () => doc);
 const panes = $('panes');
 const editorEl = $('editor');
 const modeSwitch = $('mode-switch');
@@ -739,7 +741,9 @@ function renderNow() {
     editorEl.hidden = true;
   }
 
-  // Rendered document (Read, or the Split preview).
+  // Rendered document (Read, or the Split preview). Find belongs to one
+  // tab's document: it closes when that is left.
+  if (find.isOpen() && (!tab || !showsDoc(next) || shown.id !== tab.id)) find.close();
   const docWasVisible = showsDoc(view) && !content.hidden;
   panes.dataset.view = next;
   view = next;
@@ -1040,6 +1044,7 @@ function renderShown(tab) {
   const t0 = performance.now();
   renderDoc(tab);
   shown = { id: tab.id, text: tab.text };
+  find.refresh();
   // Cost includes the layout and paint that follow.
   const id = tab.id;
   requestAnimationFrame(() => setTimeout(() => renderCost.set(id, performance.now() - t0), 0));
@@ -1198,11 +1203,28 @@ function isReloadKey(e) {
   return e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'r';
 }
 
+// Ctrl+F: open the find bar, prefilled with a single-line selection that lies
+// inside the document.
+function openFind() {
+  const sel = window.getSelection();
+  let query;
+  if (sel && !sel.isCollapsed && doc.contains(sel.anchorNode) && doc.contains(sel.focusNode)) {
+    const text = sel.toString();
+    if (text.trim() && !/[\r\n]/.test(text)) query = text;
+  }
+  find.open(query);
+}
+
 // Capture phase, so the shortcuts also work (and win) inside the editor.
 window.addEventListener('keydown', (e) => {
   if (isReloadKey(e)) {
     e.preventDefault();
     e.stopPropagation();
+    return;
+  }
+  if (e.key === 'Escape' && find.isOpen() && !modalOpen) {
+    // Not stopped: an editor search panel may close with the same key.
+    find.close();
     return;
   }
   if (!e.ctrlKey || e.metaKey) return;
@@ -1237,12 +1259,17 @@ window.addEventListener('keydown', (e) => {
     action = toggleEdit;
   } else if ((key === '\\' || e.code === 'Backslash') && plain) {
     action = toggleSplit;
-  } else if (key === 'f' && plain && showsEditor(view) && !editorEl.contains(document.activeElement)) {
+  } else if (key === 'f' && plain && state.activeId && !editorEl.contains(document.activeElement)) {
+    // Read, or Split with focus outside the editor: the find bar. Otherwise
     // CodeMirror handles Ctrl+F itself when it has focus.
-    action = () => {
-      editor.focus();
-      editor.openSearch();
-    };
+    if (showsDoc(view)) {
+      action = openFind;
+    } else if (showsEditor(view)) {
+      action = () => {
+        editor.focus();
+        editor.openSearch();
+      };
+    }
   }
   if (!action) return;
   e.preventDefault();
