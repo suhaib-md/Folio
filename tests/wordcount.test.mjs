@@ -63,3 +63,34 @@ test('5 MB under 500 ms', () => {
   const ms = bestOf(3, () => countWords(text));
   assert.ok(ms < budget(500), `took ${ms.toFixed(0)} ms`);
 });
+
+test('review fixes: www, underscore, titles, escapes, code spans, tags', () => {
+  assert.equal(countWords('see www.example.com today'), 2);
+  assert.equal(countWords('snake_case_name here'), 2);
+  assert.equal(countWords('![alt](u.png (paren title))'), 1);
+  assert.equal(countWords('![alt](u.png "t t")'), 1);
+  assert.equal(countWords('\\[not a link\\](foo) bar'), 5);
+  assert.equal(countWords('`x](y)` z'), 3);
+  // `<b and c>` is not a tag (attributes must look like attributes).
+  assert.equal(countWords('if a<b and c>d then'), 7);
+  assert.equal(countWords('a <b>bold</b> <a href="http://x.y/z">link</a> <br/> c'), 4);
+});
+
+test('reference links, autolinks, bare urls, nested brackets', () => {
+  assert.equal(countWords('see [the thing][ref] now'), 4);
+  assert.equal(countWords('see [the thing][] now'), 4);
+  assert.equal(countWords('mail <mailto:a@b.co> and <https://x.y/z> ok'), 3);
+  assert.equal(countWords('go to https://example.com/a?b=c and http://x.y now'), 4);
+  assert.equal(countWords('[outer [inner] text](http://u.v/w) end'), 4);
+  assert.equal(countWords('[a](http://u.v/(x)) b'), 2);
+});
+
+test('adversarial inputs stay linear', () => {
+  const five = 5 * 1024 * 1024;
+  const rep = (u) => u.repeat(Math.ceil(five / u.length));
+  for (const unit of ['<a ', '<a:', 'if a<b then ', '](a ', '](a "', '][', '[x](', '<a b=', '`', '\\[', 'http://', '<a b="c" ']) {
+    const text = rep(unit);
+    const ms = bestOf(2, () => countWords(text));
+    assert.ok(ms < budget(500), `${JSON.stringify(unit)} took ${ms.toFixed(0)} ms`);
+  }
+});
