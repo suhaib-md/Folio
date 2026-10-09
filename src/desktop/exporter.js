@@ -47,6 +47,10 @@ export function katexFontUrls(css) {
 
 // Document-only tweaks appended after the app stylesheet: the app's own rules
 // lock the page to the window (overflow hidden, 100% height).
+// What the exported page may load: its own inline styles and data: fonts and
+// images, plus https: images (as the app's own CSP allows). No scripts.
+export const CSP = "default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; font-src data:";
+
 const EXPORT_CSS = 'html,body{height:auto}body{overflow:auto}.markdown.export{font-size:1rem}';
 
 export function buildExportHtml({ title, bodyHtml, css, theme, images }) {
@@ -54,8 +58,11 @@ export function buildExportHtml({ title, bodyHtml, css, theme, images }) {
   const frag = p.sanitize(String(bodyHtml), {
     USE_PROFILES: { html: true, svg: true, svgFilters: true, mathMl: true },
     ADD_TAGS: ['style'],
-    FORBID_TAGS: ['script', 'base', 'meta', 'link', 'iframe', 'object', 'embed', 'foreignObject', 'form'],
-    FORBID_ATTR: ['srcdoc', 'formaction'],
+    // Nothing that fetches except <img> (and CSS-free inline styles): the CSP
+    // below is the backstop, this is the first line.
+    FORBID_TAGS: ['script', 'base', 'meta', 'link', 'iframe', 'object', 'embed', 'foreignObject', 'form',
+      'video', 'audio', 'source', 'picture', 'track', 'image', 'feImage', 'feimage'],
+    FORBID_ATTR: ['srcdoc', 'formaction', 'srcset', 'background', 'poster'],
     RETURN_DOM_FRAGMENT: true,
   });
   for (const img of frag.querySelectorAll('img')) {
@@ -65,6 +72,7 @@ export function buildExportHtml({ title, bodyHtml, css, theme, images }) {
     img.removeAttribute('data-local-path');
     img.removeAttribute('data-orig-src');
   }
+  for (const input of frag.querySelectorAll('input')) input.removeAttribute('src');
   const box = window.document.createElement('div');
   box.append(frag);
   const body = box.innerHTML;
@@ -75,6 +83,7 @@ export function buildExportHtml({ title, bodyHtml, css, theme, images }) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="${CSP}">
 <title>${escapeHtml(title)}</title>
 <style>${safeCss}
 ${EXPORT_CSS}</style>
@@ -86,23 +95,31 @@ ${EXPORT_CSS}</style>
 `;
 }
 
-// Local images of the (cloned) document as data URLs. Each <img> carrying
-// data-local-path / data-orig-src (set when the document is rendered) is put
-// back to its original src and, when `readBase64(path)` succeeds, listed in the
-// returned map under that src. A failing or oversized image stays a link.
-export async function collectImages(root, readBase64) {
+// Local images of the (detached) document as data URLs. `lookup(img)` returns
+// { orig, path } for an <img> the app resolved to a local file (kept outside
+// the DOM, so nothing in the document can name a path to read). Each such img
+// is put back to its original src and, when `readBase64(path)` succeeds and
+// the total stays within `budget` bytes, listed in the returned map under that
+// src. A failing, oversized or over-budget image stays a link.
+export const EMBED_BUDGET = 100 * 1024 * 1024;
+export async function collectImages(root, readBase64, lookup, budget = EMBED_BUDGET) {
   const images = new Map();
   const byPath = new Map();
-  for (const img of root.querySelectorAll('img[data-local-path]')) {
-    const path = img.getAttribute('data-local-path');
-    const orig = img.getAttribute('data-orig-src');
-    if (orig === null) continue;
+  let used = 0;
+  for (const img of root.querySelectorAll('img')) {
+    const found = lookup(img);
+    if (!found) continue;
+    const { orig, path } = found;
     img.setAttribute('src', orig);
+    if (images.has(orig)) continue;
     if (!byPath.has(path)) {
       byPath.set(path, readBase64(path).then((b64) => `data:${mimeFor(path)};base64,${b64}`, () => null));
     }
     const data = await byPath.get(path);
-    if (data) images.set(orig, data);
+    if (data && used + data.length <= budget) {
+      used += data.length;
+      images.set(orig, data);
+    }
   }
   return images;
 }

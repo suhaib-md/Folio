@@ -24,22 +24,47 @@ fn is_image(path: &Path) -> bool {
 /// Largest image `read_image` returns (export embeds it as base64).
 pub const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
 
+/// True for `\\server\share`, `//server/share`, `\\?\` and `\\.\` forms:
+/// paths that would make Windows open a network connection or a device.
+fn is_remote_or_device(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with("\\\\") || s.starts_with("//")
+}
+
 /// Reads an image file for embedding. Same extension rule as `write_image`;
-/// files over 10 MB fail with "too large" without being read.
+/// the path must be absolute and local (no UNC or device paths); files over
+/// 10 MB fail with "too large" even if they grow after the size check.
 pub fn read_image(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    if is_remote_or_device(path) || !path.is_absolute() {
+        return Err("not a local path".to_string());
+    }
+    #[cfg(windows)]
+    if let Some(std::path::Component::Prefix(p)) = path.components().next() {
+        use std::path::Prefix;
+        if !matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) {
+            return Err("not a local path".to_string());
+        }
+    }
     if !is_image(path) {
         return Err("not an image file".to_string());
     }
-    let meta = fs::metadata(path).map_err(|e| {
+    let file = fs::File::open(path).map_err(|e| {
         if e.kind() == io::ErrorKind::NotFound { "file not found".to_string() } else { io_err(e) }
     })?;
+    let meta = file.metadata().map_err(io_err)?;
     if !meta.is_file() {
         return Err("not an image file".to_string());
     }
     if meta.len() > MAX_READ_BYTES {
         return Err("too large".to_string());
     }
-    fs::read(path).map_err(io_err)
+    let mut bytes = Vec::new();
+    file.take(MAX_READ_BYTES + 1).read_to_end(&mut bytes).map_err(io_err)?;
+    if bytes.len() as u64 > MAX_READ_BYTES {
+        return Err("too large".to_string());
+    }
+    Ok(bytes)
 }
 
 /// Writes `bytes` to `path` without ever replacing an existing file.
@@ -106,6 +131,31 @@ mod tests {
         assert_eq!(read_image(&big).unwrap_err(), "too large");
         f.set_len(MAX_READ_BYTES).unwrap();
         assert_eq!(read_image(&big).unwrap().len() as u64, MAX_READ_BYTES);
+    }
+
+    #[test]
+    fn remote_and_device_paths_are_recognised() {
+        for p in ["\\\\server\\share\\a.png", "\\\\?\\C:\\a.png", "\\\\.\\pipe\\a.png", "//server/share/a.png"] {
+            assert!(is_remote_or_device(Path::new(p)), "{p}");
+        }
+        for p in ["C:\\a.png", "/home/a.png", "a.png"] {
+            assert!(!is_remote_or_device(Path::new(p)), "{p}");
+        }
+    }
+
+    #[test]
+    fn read_refuses_unc_and_relative_paths() {
+        for p in ["\\\\server\\share\\a.png", "//server/share/a.png", "a.png", "img/a.png"] {
+            assert_eq!(read_image(Path::new(p)).unwrap_err(), "not a local path", "{p}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn read_refuses_windows_device_prefixes() {
+        for p in [r"\\?\UNC\server\share\a.png", r"\\.\C:\a.png"] {
+            assert_eq!(read_image(Path::new(p)).unwrap_err(), "not a local path", "{p}");
+        }
     }
 
     #[test]

@@ -11,8 +11,6 @@ purify.addHook('uponSanitizeAttribute', (node, data) => {
 });
 
 let katexPromise = null;
-let mermaidPromise = null;
-let mermaidTheme = null;
 let cssLinked = false;
 let generation = 0;
 
@@ -35,27 +33,47 @@ function loadKatex() {
   return katexPromise;
 }
 
-async function loadMermaid(theme) {
-  mermaidPromise ||= import('mermaid').then((m) => m.default || m);
-  const mermaid = await mermaidPromise.catch((err) => {
-    mermaidPromise = null;
-    throw err;
-  });
-  if (mermaidTheme !== theme) {
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      htmlLabels: false,
-      flowchart: { htmlLabels: false },
-      theme: theme === 'dark' ? 'dark' : 'default',
-      // A diagram's own %%{init}%% directive can't change these.
-      secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering',
-        'maxEdges', 'htmlLabels', 'themeCSS', 'fontFamily'],
-    });
-    mermaidTheme = theme;
-  }
-  return mermaid;
+// Mermaid's theme is one global setting, and a render uses whatever is set
+// when it runs. Every Mermaid job (live document, export, print) therefore
+// goes through one promise chain: inside it the theme is set if it differs,
+// then the job's render is awaited before the next job starts.
+export function createMermaidQueue(load, configure) {
+  let chain = Promise.resolve();
+  let libPromise = null;
+  let current = null;
+  return {
+    run(theme, job) {
+      const result = chain.then(async () => {
+        libPromise ||= load();
+        const lib = await libPromise.catch((err) => {
+          libPromise = null;
+          throw err;
+        });
+        if (current !== theme) {
+          configure(lib, theme);
+          current = theme;
+        }
+        return job(lib);
+      });
+      chain = result.catch(() => {});
+      return result;
+    },
+  };
 }
+
+const mermaidQueue = createMermaidQueue(
+  () => import('mermaid').then((m) => m.default || m),
+  (mermaid, theme) => mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    htmlLabels: false,
+    flowchart: { htmlLabels: false },
+    theme: theme === 'dark' ? 'dark' : 'default',
+    // A diagram's own %%{init}%% directive can't change these.
+    secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering',
+      'maxEdges', 'htmlLabels', 'themeCSS', 'fontFamily'],
+  }),
+);
 
 function cacheSet(key, svg) {
   svgCache.delete(key);
@@ -90,7 +108,7 @@ function showError(pre, message) {
 const mathCache = new Map(); // display + errorColor + tex -> detached rendered element
 const MATH_CACHE_MAX = 500;
 
-async function renderMath(nodes, alive) {
+async function renderMath(nodes, alive, fixedErrorColor) {
   linkKatexCss();
   let katex;
   try {
@@ -101,7 +119,8 @@ async function renderMath(nodes, alive) {
   }
   if (!alive()) return;
   // Inline style beats CSS, so the error colour comes from the theme here.
-  const errorColor = getComputedStyle(document.documentElement).getPropertyValue('--danger-fg').trim() || '#cc0000';
+  const errorColor = fixedErrorColor
+    || getComputedStyle(document.documentElement).getPropertyValue('--danger-fg').trim() || '#cc0000';
   for (const el of nodes) {
     const tex = el.getAttribute('data-tex') ?? el.textContent;
     const displayMode = el.classList.contains('math-display');
@@ -160,18 +179,11 @@ async function renderDiagrams(items, theme, alive) {
     }
   }
   if (!todo.length) return;
-  let mermaid;
-  try {
-    mermaid = await loadMermaid(theme);
-  } catch (err) {
-    if (alive()) for (const t of todo) fail(t, err?.message || 'Mermaid failed to load');
-    return;
-  }
   for (const item of todo) {
     if (!alive()) return;
     const id = `folio-mermaid-${++diagramSeq}`;
     try {
-      const { svg } = await mermaid.render(id, item.source);
+      const { svg } = await mermaidQueue.run(theme, (mermaid) => mermaid.render(id, item.source));
       if (!alive()) return;
       const clean = sanitizeSvg(svg);
       if (!clean || !svgNode(clean)) throw new Error('empty diagram');
@@ -217,7 +229,7 @@ export async function renderEnhancements(docEl, { theme, isolated = false }) {
     }
   }
   const jobs = [];
-  if (maths.length) jobs.push(renderMath(maths, alive));
+  if (maths.length) jobs.push(renderMath(maths, alive, isolated ? (theme === 'dark' ? '#ffa198' : '#82071e') : ''));
   if (items.length) jobs.push(renderDiagrams(items, theme, alive));
   await Promise.all(jobs);
 }

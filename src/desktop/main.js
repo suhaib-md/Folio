@@ -1629,8 +1629,9 @@ function renderTabs() {
 
 // The rendered document of a tab as a fragment. Relative <img> sources are
 // rewritten before the browser tries to load them; the original src and the
-// resolved path stay on the element (data-orig-src / data-local-path) so
-// Export HTML can embed the file. Both attributes are stripped from the export.
+// resolved path are remembered in `localImages` (not as attributes: a document
+// could forge those) so Export HTML can embed the file.
+const localImages = new WeakMap(); // <img> -> { orig, path }, never in the DOM
 function docFragment(tab) {
   const tpl = document.createElement('template');
   tpl.innerHTML = renderMarkdown(tab.text);
@@ -1639,8 +1640,7 @@ function docFragment(tab) {
       const orig = img.getAttribute('src');
       const p = resolveRelative(tab.path, orig);
       if (p) {
-        img.dataset.origSrc = orig;
-        img.dataset.localPath = p;
+        localImages.set(img, { orig, path: p });
         img.setAttribute('src', backend.assetUrl(p));
       }
     }
@@ -1970,12 +1970,14 @@ async function exportHtml() {
   try {
     const theme = effectiveTheme();
     const el = await drawnCopy(tab, theme);
-    const images = await collectImages(el, backend.readImageBase64);
+    const images = await collectImages(el, backend.readImageBase64, (img) => localImages.get(img));
     const css = await collectCss(el, {
       fetchText: async (url) => (await fetchOk(url)).text(),
       fetchBase64,
     });
-    const title = el.querySelector('h1')?.textContent.trim() || stem;
+    const h1 = el.querySelector('h1')?.cloneNode(true);
+    h1?.querySelectorAll('.katex-mathml').forEach((n) => n.remove()); // the visible maths text is enough
+    const title = h1?.textContent.trim() || stem;
     const html = buildExportHtml({ title, bodyHtml: el.innerHTML, css, theme, images });
     await backend.writeFile(path, html, 'lf', false);
     showBanner(`Exported ${name}.`, 'info');
@@ -1988,27 +1990,35 @@ async function exportHtml() {
 // drawn into #print-area (hidden on screen, the only thing shown by
 // @media print), so Edit mode and the theme don't matter.
 const printArea = $('print-area');
+let printing = false;
 async function printDoc() {
   const tab = getActiveTab();
-  if (!tab) return;
-  const el = await drawnCopy(tab, 'light');
-  printArea.replaceChildren(el);
-  // Pictures load lazily from the asset protocol; wait (briefly) for them.
-  await Promise.race([
-    Promise.all([...el.querySelectorAll('img')].map((img) => img.decode().catch(() => {}))),
-    new Promise((r) => setTimeout(r, 3000)),
-  ]);
-  document.body.classList.add('printing');
+  if (!tab || printing) return;
+  printing = true;
   const done = () => {
     document.body.classList.remove('printing');
     printArea.replaceChildren();
   };
-  window.addEventListener('afterprint', done, { once: true });
   try {
-    window.print();
+    const el = await drawnCopy(tab, 'light');
+    printArea.replaceChildren(el);
+    // Pictures load lazily from the asset protocol; wait (briefly) for them.
+    await Promise.race([
+      Promise.all([...el.querySelectorAll('img')].map((img) => img.decode().catch(() => {}))),
+      new Promise((r) => setTimeout(r, 3000)),
+    ]);
+    document.body.classList.add('printing');
+    window.addEventListener('afterprint', done, { once: true });
+    try {
+      window.print();
+    } catch (err) {
+      window.removeEventListener('afterprint', done);
+      throw err;
+    }
   } catch (err) {
-    window.removeEventListener('afterprint', done);
     done();
     showBanner(`Couldn't print: ${errorText(err)}`);
+  } finally {
+    printing = false; // only the preparation is guarded; the dialog may stay open
   }
 }
