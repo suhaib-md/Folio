@@ -113,8 +113,10 @@ fn search_folder(
     match_case: bool,
     request_id: u64,
 ) -> Result<SearchReply, String> {
-    latest.0.store(request_id, Ordering::SeqCst);
-    let cancel = || latest.0.load(Ordering::SeqCst) != request_id;
+    // fetch_max: a late-running older request can never lower the id and
+    // cancel a newer one.
+    latest.0.fetch_max(request_id, Ordering::SeqCst);
+    let cancel = || latest.0.load(Ordering::SeqCst) > request_id;
     let r = search::search_folder(Path::new(&folder), &query, match_case, SEARCH_LIMIT, &cancel)?;
     Ok(SearchReply {
         request_id,

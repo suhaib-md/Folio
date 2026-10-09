@@ -66,6 +66,9 @@ export const launchPaths = () => impl.launchPaths();
 export const readFile = (path) => impl.readFile(path);
 export const writeFile = (path, text, eol, bom) => impl.writeFile(path, text, eol, bom);
 export const listTree = (folder) => impl.listTree(folder);
+// Request ids must increase monotonically, also across webview reloads (the
+// Rust side keeps the highest id seen and cancels any lower one); callers
+// seed them from Date.now().
 export const searchFolder = (folder, query, matchCase, requestId) =>
   impl.searchFolder(folder, query, matchCase, requestId);
 export const watch = (files, folder) => impl.watch(files, folder);

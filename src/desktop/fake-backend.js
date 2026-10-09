@@ -220,6 +220,7 @@ const SEARCH_WINDOW = 200;
 const SEARCH_LEAD = 60;
 let latestSearch = 0;
 const foldChar = (c) => {
+  if (c === '\u03c2') return '\u03c3';
   const l = c.toLowerCase();
   return [...l].length === 1 ? l : c;
 };
@@ -252,11 +253,13 @@ function lineMatches(lineNo, rawLine, query, matchCase, out, limit, total) {
           : Math.min(Math.max(i - SEARCH_LEAD, 0, i + q - SEARCH_WINDOW), chars.length - SEARCH_WINDOW);
       we = Math.min(ws + SEARCH_WINDOW, chars.length);
     }
+    const start = chars.slice(ws, i).join('').length;
     out.push({
       line: lineNo,
+      col: chars.slice(0, i).join('').length,
       text: chars.slice(ws, we).join(''),
-      start: i - ws,
-      end: Math.min(i + q - ws, we - ws),
+      start,
+      end: start + chars.slice(i, Math.min(i + q, we)).join('').length,
     });
     i += q;
   }

@@ -11,19 +11,23 @@ Object.assign(fs, {
   '/s/.git/x.md': 'foo',
   '/s/node_modules/y.md': 'foo',
   '/s/n.txt': 'foo',
+  '/s/emoji.md': '\u{1F600} foo bar',
+  '/s/greek.md': 'ΟΔΥΣΣΕΥΣ İstanbul',
   '/s/long.md': 'é'.repeat(300) + 'NEEDLE' + 'z'.repeat(300),
 });
 
 test('searchFolder: order, skip rules, offsets', async () => {
   const r = await searchFolder('/s', 'foo', true, 1);
   assert.equal(r.requestId, 1);
-  assert.deepEqual(r.files.map((f) => f.path), ['/s/b/c.md', '/s/a.md']);
-  assert.deepEqual(r.files[1].matches.map((m) => [m.line, m.start, m.end]), [[1, 4, 7], [3, 4, 7]]);
+  assert.deepEqual(r.files.map((f) => f.path), ['/s/b/c.md', '/s/a.md', '/s/emoji.md']);
+  assert.deepEqual(r.files[1].matches.map((m) => [m.line, m.col, m.start, m.end]), [[1, 4, 4, 7], [3, 4, 4, 7]]);
 });
 
 test('searchFolder: case folding, empty query, window', async () => {
   const ci = await searchFolder('/s', 'foo', false, 2);
   assert.equal(ci.files.find((f) => f.path === '/s/a.md').matches.length, 3);
+  assert.equal((await searchFolder('/s', 'οδυσσευς', false, 5)).files[0].matches.length, 1);
+  assert.equal((await searchFolder('/s', 'İstanbul', false, 6)).files[0].matches[0].start, 9);
   assert.deepEqual(await searchFolder('/s', '', false, 3), { requestId: 3, files: [], truncated: false });
   const r = await searchFolder('/s', 'needle', false, 4);
   const m = r.files[0].matches[0];
@@ -36,4 +40,11 @@ test('searchFolder: a newer request rejects the older one', async () => {
   const newer = searchFolder('/s', 'foo', true, 11);
   await assert.rejects(older, (e) => e === 'cancelled');
   assert.equal((await newer).requestId, 11);
+});
+
+test('searchFolder: UTF-16 offsets with astral chars', async () => {
+  const r = await searchFolder('/s', 'foo', true, 20);
+  const m = r.files.find((f) => f.path === '/s/emoji.md').matches[0];
+  assert.deepEqual([m.col, m.start, m.end], [3, 3, 6]);
+  assert.equal(m.text.slice(m.start, m.end), 'foo');
 });

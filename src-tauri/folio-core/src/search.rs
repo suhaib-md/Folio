@@ -13,7 +13,9 @@ pub struct LineMatch {
     pub line: usize,
     /// The line, or a 200-char window of it containing the match.
     pub text: String,
-    /// Char offsets of the match into `text`.
+    /// UTF-16 code-unit offset of the match start within the FULL line.
+    pub col: usize,
+    /// UTF-16 code-unit offsets of the match into `text`.
     pub start: usize,
     pub end: usize,
 }
@@ -37,21 +39,54 @@ pub struct SearchResult {
 fn fold(c: char) -> char {
     let mut it = c.to_lowercase();
     match (it.next(), it.next()) {
+        // Final sigma folds to sigma so "ΟΔΥΣΣΕΥΣ" matches "οδυσσευς".
+        (Some('ς'), None) => 'σ',
         (Some(l), None) => l,
         _ => c,
     }
 }
 
+fn utf16_len(chars: &[char]) -> usize {
+    chars.iter().map(|c| c.len_utf16()).sum()
+}
+
+/// Cheap rejection before any per-line allocation of char vectors. Never
+/// rejects a line that matches.
+fn may_match(line: &str, raw_query: &str, query_ascii_lower: Option<&str>, match_case: bool) -> bool {
+    if match_case {
+        line.contains(raw_query)
+    } else if let Some(q) = query_ascii_lower {
+        if line.is_ascii() {
+            line.to_ascii_lowercase().contains(q)
+        } else {
+            true
+        }
+    } else {
+        true
+    }
+}
+
+struct Query<'a> {
+    raw: &'a str,
+    ascii_lower: Option<String>,
+    chars: Vec<char>,
+}
+
 fn line_matches(
     line_no: usize,
     line: &str,
-    query: &[char],
+    query: &Query,
     match_case: bool,
     out: &mut Vec<LineMatch>,
     limit: usize,
     total: &mut usize,
 ) -> bool {
-    let chars: Vec<char> = line.trim_end_matches('\r').chars().collect();
+    let line = line.trim_end_matches('\r');
+    if !may_match(line, query.raw, query.ascii_lower.as_deref(), match_case) {
+        return false;
+    }
+    let query = &query.chars;
+    let chars: Vec<char> = line.chars().collect();
     let q = query.len();
     if chars.len() < q {
         return false;
@@ -64,7 +99,7 @@ fn line_matches(
     let hay = if match_case { &chars } else { &hay };
     let mut i = 0;
     while i + q <= hay.len() {
-        if hay[i..i + q] != *query {
+        if hay[i..i + q] != query[..] {
             i += 1;
             continue;
         }
@@ -84,11 +119,13 @@ fn line_matches(
             };
             (ws, (ws + WINDOW).min(chars.len()))
         };
+        let start = utf16_len(&chars[ws..i]);
         out.push(LineMatch {
             line: line_no,
+            col: utf16_len(&chars[..i]),
             text: chars[ws..we].iter().collect(),
-            start: i - ws,
-            end: (i + q - ws).min(we - ws),
+            start,
+            end: start + utf16_len(&chars[i..(i + q).min(we)]),
         });
         i += q;
     }
@@ -96,7 +133,7 @@ fn line_matches(
 }
 
 struct Ctx<'a> {
-    query: Vec<char>,
+    query: Query<'a>,
     match_case: bool,
     limit: usize,
     total: usize,
@@ -174,13 +211,18 @@ pub fn search_folder(
     if query.is_empty() {
         return Ok(SearchResult { files: Vec::new(), truncated: false });
     }
-    let query: Vec<char> = if match_case {
+    let meta = std::fs::metadata(root).map_err(|_| "folder not found".to_string())?;
+    if !meta.is_dir() {
+        return Err("folder not found".to_string());
+    }
+    let chars: Vec<char> = if match_case {
         query.chars().collect()
     } else {
         query.chars().map(fold).collect()
     };
+    let ascii_lower = query.is_ascii().then(|| query.to_ascii_lowercase());
     let mut ctx = Ctx {
-        query,
+        query: Query { raw: query, ascii_lower, chars },
         match_case,
         limit,
         total: 0,
@@ -298,6 +340,64 @@ mod tests {
         let r = search_folder(d.path(), &"q".repeat(250), true, 10, &never).unwrap();
         let m = &r.files.iter().find(|f| f.path.ends_with("d.md")).unwrap().matches[0];
         assert_eq!((m.text.chars().count(), m.start, m.end), (200, 0, 200));
+    }
+
+    #[test]
+    fn offsets_are_utf16_and_col_is_in_the_full_line() {
+        let d = tempfile::tempdir().unwrap();
+        put(&d.path().join("a.md"), "\u{1F600} foo\n");
+        let r = search_folder(d.path(), "foo", true, 10, &never).unwrap();
+        let m = &r.files[0].matches[0];
+        assert_eq!((m.col, m.start, m.end), (3, 3, 6));
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["files"][0]["matches"][0]["col"], 3);
+
+        // Windowed long line: col is in the full line, start in the window.
+        put(&d.path().join("b.md"), &format!("{}foo{}", "\u{1F600}".repeat(100), "y".repeat(300)));
+        let r = search_folder(d.path(), "foo", true, 10, &never).unwrap();
+        let m = &r.files[1].matches[0];
+        assert_eq!(m.col, 200);
+        assert_eq!(m.text.chars().count(), 200);
+        let before: String = m.text.chars().take(m.text.encode_utf16().take(m.start).count()).collect();
+        assert!(!before.is_empty());
+        let units: Vec<u16> = m.text.encode_utf16().collect();
+        assert_eq!(String::from_utf16(&units[m.start..m.end]).unwrap(), "foo");
+    }
+
+    #[test]
+    fn folds_greek_final_sigma_and_keeps_dotted_i() {
+        let d = tempfile::tempdir().unwrap();
+        put(&d.path().join("a.md"), "ΟΔΥΣΣΕΥΣ odysseus İstanbul\n");
+        let r = search_folder(d.path(), "οδυσσευς", false, 10, &never).unwrap();
+        assert_eq!(r.files[0].matches.len(), 1);
+        let r = search_folder(d.path(), "οδυσσευσ", false, 10, &never).unwrap();
+        assert_eq!(r.files[0].matches.len(), 1);
+        let r = search_folder(d.path(), "İstanbul", false, 10, &never).unwrap();
+        assert_eq!(r.files[0].matches[0].start, 18);
+    }
+
+    #[test]
+    fn missing_or_non_directory_root_is_an_error() {
+        let d = tempfile::tempdir().unwrap();
+        put(&d.path().join("a.md"), "x");
+        assert_eq!(
+            search_folder(&d.path().join("nope"), "x", true, 10, &never),
+            Err("folder not found".to_string())
+        );
+        assert_eq!(
+            search_folder(&d.path().join("a.md"), "x", true, 10, &never),
+            Err("folder not found".to_string())
+        );
+    }
+
+    #[test]
+    fn root_path_with_spaces_and_non_ascii() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("Muhammed suhaib").join("Notés");
+        put(&root.join("sub dir/é.md"), "find me");
+        let r = search_folder(&root, "find", false, 10, &never).unwrap();
+        assert_eq!(r.files.len(), 1);
+        assert!(r.files[0].path.ends_with("é.md"));
     }
 
     #[test]
