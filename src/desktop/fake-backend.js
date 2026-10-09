@@ -22,6 +22,7 @@
 //   opened, watched, closed, recent   what the app asked for
 //   settings            what settings.json would hold (localStorage
 //                      'folio-fake-settings'), or null
+//   failWrites         (get/set) writes reject with "permission denied"
 // URL flags: ?failWrites=1 makes writeFile and writeImage reject with
 // "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
@@ -155,8 +156,16 @@ const readSettings = () => {
   }
 };
 
+let failWrites = params.get('failWrites') === '1';
+
 const fake = {
   fs,
+  get failWrites() {
+    return failWrites;
+  },
+  set failWrites(v) {
+    failWrites = !!v;
+  },
   get settings() {
     return readSettings();
   },
@@ -228,7 +237,7 @@ export async function readFile(path) {
 }
 
 export async function writeFile(path, text /* , eol, bom */) {
-  if (params.get('failWrites') === '1') throw 'permission denied';
+  if (failWrites) throw 'permission denied';
   fs[path] = text;
 }
 
@@ -240,7 +249,7 @@ const MIME = { jpg: 'jpeg', svg: 'svg+xml', ico: 'x-icon' };
 export async function writeImage(path, base64) {
   const m = IMAGE_EXT.exec(path);
   if (!m) throw 'not an image file';
-  if (params.get('failWrites') === '1') throw 'permission denied';
+  if (failWrites) throw 'permission denied';
   if (path in fs) throw 'already exists';
   const ext = m[1].toLowerCase();
   fs[path] = `data:image/${MIME[ext] || ext};base64,${base64}`;

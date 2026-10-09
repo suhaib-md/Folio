@@ -202,7 +202,9 @@ const autosave = createAutosave({
   blocked: () => modalOpen,
   save: async (id) => {
     const ok = await save(id);
-    if (!ok && findTab(id)) commit((s) => T.setAutosavePaused(s, id, true));
+    // Only a real failure pauses (its banner is up); a cancelled joined
+    // Save As also returns false.
+    if (!ok && findTab(id)?.banner?.kind === SAVE_ERROR) commit((s) => T.setAutosavePaused(s, id, true));
   },
 });
 
@@ -629,13 +631,7 @@ async function saveNow(id, as) {
     commit((s) => T.setBanner(s, id, banner));
     return false;
   }
-  commit((s) => {
-    let next = T.markSaved(s, id, saveAs ? { path, text } : { text });
-    const saved = next.tabs.find((t) => t.id === id);
-    // What we just wrote is now the file: save errors and disk banners are moot.
-    if (saved?.banner) next = T.setBanner(next, id, null);
-    return T.setAutosavePaused(next, id, false);
-  });
+  commit((s) => T.saveSucceeded(s, id, saveAs ? { path, text } : { text }));
   if (saveAs) {
     // Another clean tab showing the file we just wrote over is now stale.
     const n = T.normalizePath(path);

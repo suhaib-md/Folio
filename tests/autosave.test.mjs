@@ -85,3 +85,51 @@ test('a tab that became ineligible before the timer fired is not saved', () => {
   fire();
   assert.deepEqual(saves, []);
 });
+
+test('pending-decision banners and a missing file block autosave', () => {
+  const { a, tab, timers, fire, saves } = rig();
+  for (const kind of ['disk-changed', 'disk-removed', 'recovered']) {
+    a.sync([tab('t1', { banner: { kind, text: 'x' } })], true);
+    a.sync([tab('t1', { banner: { kind, text: 'x' }, text: 'more typing' })], true);
+    assert.equal(timers.size, 0, kind);
+  }
+  a.sync([tab('t1', { savedText: null })], true); // removed: savedText cleared
+  assert.equal(timers.size, 0);
+  fire();
+  assert.deepEqual(saves, []);
+  // save-error and paste-error banners do not block (autosavePaused covers the former)
+  a.sync([tab('t1', { banner: { kind: 'paste-error', text: 'x' } })], true);
+  assert.equal(timers.size, 1);
+});
+
+test('banner answered: autosave resumes for the still-dirty tab', () => {
+  const { a, tab, timers, saves, fire } = rig();
+  a.sync([tab('t1', { banner: { kind: 'recovered', text: 'x' } })], true);
+  assert.equal(timers.size, 0);
+  a.sync([tab('t1', { banner: null })], true);
+  assert.equal(timers.size, 1);
+  fire();
+  assert.deepEqual(saves, ['t1']);
+});
+
+test('failed autosave pauses; a later successful save clears the pause and autosave works again', () => {
+  const { a, tab, timers } = rig();
+  let s = T.openFile(T.createState(), { path: '/a.md', text: 'a', eol: 'lf', bom: false });
+  const id = s.activeId;
+  s = T.setText(s, id, 'ab');
+  a.sync(s.tabs.map((t) => ({ ...t })), true);
+  assert.equal(timers.size, 1);
+  s = T.setBanner(s, id, { kind: 'save-error', text: 'x' });
+  s = T.setAutosavePaused(s, id, true);
+  a.sync(s.tabs, true);
+  assert.equal(timers.size, 0);
+  s = T.setText(s, id, 'abc'); // typing while paused: still nothing
+  a.sync(s.tabs, true);
+  assert.equal(timers.size, 0);
+  s = T.saveSucceeded(s, id, { text: 'abc' }); // manual save worked
+  assert.equal(s.tabs[0].autosavePaused, false);
+  assert.equal(s.tabs[0].banner, null);
+  s = T.setText(s, id, 'abcd');
+  a.sync(s.tabs, true);
+  assert.equal(timers.size, 1);
+});

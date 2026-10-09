@@ -79,9 +79,13 @@ test('update with no change neither notifies nor saves; flush writes pending', a
   assert.equal(calls, 1);
 });
 
-test('load failure gives defaults; a failing save does not throw', async () => {
+test('load failure gives defaults; a failing save does not throw', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
   const s = createSettings({ settingsGet: async () => { throw 'boom'; }, settingsSet: async () => { throw 'nope'; } });
   assert.deepEqual(await s.load(), DEFAULTS);
   s.update({ autosave: true });
   await s.flush();
+  assert.equal(warn.mock.callCount(), 2);
+  assert.match(String(warn.mock.calls[0].arguments[0]), /loading settings failed/);
+  assert.match(String(warn.mock.calls[1].arguments[0]), /saving settings failed/);
 });

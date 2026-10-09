@@ -7,7 +7,16 @@ import { isDirty } from './tabs.js';
 
 export const AUTOSAVE_MS = 1000;
 
-export const eligible = (tab) => tab.path != null && isDirty(tab) && !tab.autosavePaused;
+// Banners that are not a pending decision: a save error (autosavePaused
+// covers it) and a failed image paste. Any other banner (changed on disk,
+// removed, recovered draft) waits for the user's answer first.
+const HARMLESS_BANNERS = ['save-error', 'paste-error'];
+
+// savedText null: the file is gone (or unreadable), saving would recreate it.
+export const eligible = (tab) =>
+  tab.path != null && isDirty(tab) && !tab.autosavePaused &&
+  typeof tab.savedText === 'string' &&
+  (!tab.banner || HARMLESS_BANNERS.includes(tab.banner.kind));
 
 // getTab(id) -> the tab as it is NOW (flushed), or null.
 // save(id) -> Promise; the app's normal save, plus pausing the tab on failure.

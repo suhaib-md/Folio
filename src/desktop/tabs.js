@@ -82,6 +82,14 @@ export const setBanner = (state, id, banner) => update(state, id, () => ({ banne
 // Set by a failed autosave, cleared by the next successful save.
 export const setAutosavePaused = (state, id, paused) =>
   update(state, id, () => ({ autosavePaused: !!paused }));
+// A save reached the disk: `text` is now the file (and `path` the file, for
+// Save As). Save errors and disk banners are moot, and autosave may resume.
+export function saveSucceeded(state, id, { path, text }) {
+  let next = markSaved(state, id, path != null ? { path, text } : { text });
+  const tab = next.tabs.find((t) => t.id === id);
+  if (tab?.banner) next = setBanner(next, id, null);
+  return setAutosavePaused(next, id, false);
+}
 export const clearSaved = (state, id) => update(state, id, () => ({ savedText: null }));
 
 export function markSaved(state, id, { path, text }) {
