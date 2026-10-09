@@ -4,6 +4,13 @@ export const SAVE_DELAY = 300;
 export const ZOOM_MIN = 70;
 export const ZOOM_MAX = 200;
 export const ZOOM_STEP = 10;
+// One zoom step: dir 1 up, -1 down, 0 reset. Always lands on the 10% grid
+// inside ZOOM_MIN..ZOOM_MAX.
+export function zoomStep(zoom, dir) {
+  if (dir === 0) return DEFAULTS.zoom;
+  const z = Number.isFinite(zoom) ? Math.round(zoom / ZOOM_STEP) * ZOOM_STEP : DEFAULTS.zoom;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z + dir * ZOOM_STEP));
+}
 const THEMES = ['system', 'light', 'dark'];
 const SIDEBAR_TABS = ['files', 'outline', 'search'];
 const MODES = ['read', 'edit', 'split'];

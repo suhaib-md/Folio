@@ -64,6 +64,8 @@ const real = {
   // destroy() skips the close-requested handler (we already asked).
   closeWindow: () => getCurrentWindow().destroy(),
   setTitle: (t) => getCurrentWindow().setTitle(t),
+  // 'light' | 'dark' forces the title bar theme, null follows the system.
+  setWindowTheme: (theme) => getCurrentWindow().setTheme(theme),
 };
 
 export const isDesktop = typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__;
@@ -101,3 +103,4 @@ export const onDragDrop = (cb) => impl.onDragDrop(cb);
 export const onCloseRequested = (cb) => impl.onCloseRequested(cb);
 export const closeWindow = () => impl.closeWindow();
 export const setTitle = (t) => impl.setTitle(t);
+export const setWindowTheme = (theme) => impl.setWindowTheme(theme);

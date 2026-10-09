@@ -1,8 +1,9 @@
 // Popup menu (the toolbar's ⋯ menu).
 //
 // openMenu(anchor, items) -> { close() }
-// items: ({ label, checked?, disabled?, submenu?, onSelect } | 'separator')[]
-//   checked (boolean) makes a menuitemcheckbox with aria-checked;
+// items: ({ label, checked?, radio?, disabled?, submenu?, onSelect } | 'separator')[]
+//   checked (boolean) makes a menuitemcheckbox with aria-checked (or a
+//   menuitemradio when radio: true);
 //   submenu (items) makes a menuitem with aria-haspopup="menu".
 // Up/Down move (wrapping), Home/End jump, Right opens a submenu, Left closes
 // it, Enter/Space activate, Esc closes one level, Tab or a click outside
@@ -89,7 +90,7 @@ export function openMenu(anchor, items) {
       row.tabIndex = -1;
       itemOf.set(row, item);
       const isCheck = typeof item.checked === 'boolean';
-      row.setAttribute('role', isCheck ? 'menuitemcheckbox' : 'menuitem');
+      row.setAttribute('role', isCheck ? (item.radio ? 'menuitemradio' : 'menuitemcheckbox') : 'menuitem');
       if (isCheck) row.setAttribute('aria-checked', String(item.checked));
       if (item.disabled) row.setAttribute('aria-disabled', 'true');
       const mark = d.createElement('span');

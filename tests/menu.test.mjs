@@ -116,3 +116,13 @@ test('click selects, disabled click does nothing, click outside closes, anchor t
   assert.equal(openMenu(btn, [{ label: 'A' }]), null); // second open on the same anchor toggles it shut
   assert.equal(isMenuOpen(), false);
 });
+
+test('radio items are menuitemradio with aria-checked', () => {
+  closeMenu();
+  const btn = document.getElementById('b');
+  openMenu(btn, [{ label: 'A', checked: true, radio: true }, { label: 'B', checked: false, radio: true }]);
+  const r = [...document.querySelectorAll('[role=menuitemradio]')];
+  assert.equal(r.length, 2);
+  assert.deepEqual(r.map((e) => e.getAttribute('aria-checked')), ['true', 'false']);
+  closeMenu();
+});

@@ -489,6 +489,8 @@ export async function closeWindow() {
   fake.closed = true;
 }
 
+export async function setWindowTheme(/* theme */) {}
+
 export async function setTitle(t) {
   document.title = t;
 }

@@ -27,7 +27,7 @@ const theme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
-    fontSize: '14px',
+    fontSize: 'calc(14px * var(--doc-zoom, 1))',
     lineHeight: '1.6',
   },
   // Same readable column as the Read view; Split panes are narrower anyway.

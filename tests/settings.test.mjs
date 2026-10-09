@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS, normalize, createSettings } from '../src/desktop/settings.js';
+import { DEFAULTS, normalize, createSettings, zoomStep } from '../src/desktop/settings.js';
 
 test('normalize: defaults for junk', () => {
   for (const raw of [null, undefined, 5, 'x', [], {}]) assert.deepEqual(normalize(raw), DEFAULTS);
@@ -88,4 +88,14 @@ test('load failure gives defaults; a failing save does not throw', async (t) => 
   assert.equal(warn.mock.callCount(), 2);
   assert.match(String(warn.mock.calls[0].arguments[0]), /loading settings failed/);
   assert.match(String(warn.mock.calls[1].arguments[0]), /saving settings failed/);
+});
+
+test('zoomStep up/down/reset and clamps at 70 and 200', () => {
+  assert.equal(zoomStep(100, 1), 110);
+  assert.equal(zoomStep(100, -1), 90);
+  assert.equal(zoomStep(150, 0), 100);
+  assert.equal(zoomStep(200, 1), 200);
+  assert.equal(zoomStep(70, -1), 70);
+  assert.equal(zoomStep(74, 1), 80); // off-grid values snap first
+  assert.equal(zoomStep(NaN, 1), 110);
 });

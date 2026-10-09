@@ -19,7 +19,7 @@ import { extractHeadings, headingForFragment, buildOutline, currentIndex, headin
 import { renderSearch, matchOrdinal } from './search.js';
 import { blobToImage, savePastedImage } from './paste-image.js';
 import { createDraftScheduler, restorePlan, restoreDecision } from './drafts.js';
-import { createSettings } from './settings.js';
+import { createSettings, zoomStep } from './settings.js';
 import { createAutosave } from './autosave.js';
 import { openMenu, closeMenu } from './menu.js';
 
@@ -223,14 +223,68 @@ async function showAbout() {
   showBanner(appVersion ? `Folio ${appVersion}` : 'Folio', 'info');
 }
 
+// ---- zoom and theme ----------------------------------------------------------
+
+// Zoom scales the document and editor text through --doc-zoom (chrome stays
+// put); the theme is data-theme on <html> (absent = follow the system).
+function applyAppearance({ zoom, theme }) {
+  const root = document.documentElement;
+  root.style.setProperty('--doc-zoom', String(zoom / 100));
+  if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
+  else delete root.dataset.theme;
+  Promise.resolve(backend.setWindowTheme(theme === 'system' ? null : theme)).catch((err) =>
+    console.warn('setting the window theme failed:', err));
+}
+let appliedLook = '';
+function syncAppearance() {
+  const { zoom, theme } = settings.get();
+  const key = `${zoom}/${theme}`;
+  if (key === appliedLook) return;
+  appliedLook = key;
+  applyAppearance({ zoom, theme });
+}
+settings.onChange(syncAppearance);
+
+function zoomBy(dir) {
+  settings.update({ zoom: zoomStep(settings.get().zoom, dir) });
+}
+
+// Ctrl+wheel over the document or editor: one step per wheel event, throttled
+// so a free-spinning wheel doesn't race through the range.
+let lastWheelZoom = 0;
+function onZoomWheel(e) {
+  if (!e.ctrlKey) return;
+  e.preventDefault(); // also keeps the WebView's own zoom away
+  const now = performance.now();
+  if (now - lastWheelZoom < 50 || e.deltaY === 0) return;
+  lastWheelZoom = now;
+  zoomBy(e.deltaY < 0 ? 1 : -1);
+}
+for (const el of [content, editorEl]) el.addEventListener('wheel', onZoomWheel, { passive: false });
+
 // Later tasks append their items here.
 function moreMenuItems() {
+  const { theme, zoom } = settings.get();
+  const themeItem = (label, value) => ({
+    label,
+    checked: theme === value,
+    radio: true,
+    onSelect: () => settings.update({ theme: value }),
+  });
   return [
+    {
+      label: 'Theme',
+      submenu: [themeItem('System', 'system'), themeItem('Light', 'light'), themeItem('Dark', 'dark')],
+    },
     {
       label: 'Autosave',
       checked: settings.get().autosave,
       onSelect: () => settings.update({ autosave: !settings.get().autosave }),
     },
+    'separator',
+    { label: 'Zoom in', onSelect: () => zoomBy(1) },
+    { label: 'Zoom out', onSelect: () => zoomBy(-1) },
+    { label: `Reset zoom (${zoom}%)`, onSelect: () => zoomBy(0) },
     'separator',
     { label: 'About Folio', onSelect: showAbout },
   ];
@@ -1707,7 +1761,14 @@ window.addEventListener('keydown', (e) => {
   if (e.altKey && key !== '\\') return;
   const plain = !e.shiftKey;
   let action;
-  if (key === 'o') {
+  const zoomDir = e.altKey ? null : // (AltGr: key "\\" can sit on the Minus code)
+    key === '=' || key === '+' || e.code === 'Equal' || e.code === 'NumpadAdd' ? 1
+    : key === '-' || e.code === 'Minus' || e.code === 'NumpadSubtract' ? -1
+    : key === '0' || e.code === 'Digit0' || e.code === 'Numpad0' ? 0
+    : null;
+  if (zoomDir !== null) {
+    action = () => zoomBy(zoomDir);
+  } else if (key === 'o') {
     action = plain ? pickAndOpen : pickFolderAndOpen;
   } else if (key === 'b' && e.shiftKey) {
     action = toggleSidebar;
@@ -1777,6 +1838,7 @@ window.addEventListener('drop', (e) => e.preventDefault());
 
 async function startup() {
   await settings.load();
+  syncAppearance();
   render();
   trackRecent(backend.recentGet(), 'recentGet');
   await backend.onCloseRequested(onCloseRequested);
