@@ -31,6 +31,7 @@
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
 // ?truncated=1 makes listTree report a truncated tree;
 // ?searchLimit=N sets the searchFolder match limit (default 1000);
+// ?slowDrafts=MS delays the crash-recovery drafts listing by MS (startup race checks);
 // ?noDrafts=1 turns crash-recovery drafts off (none stored, none restored);
 // ?recentFiles=/a.md,/b.md and ?recentFolders=/x seed the recent lists
 // (paths need not exist).
@@ -446,6 +447,8 @@ export async function recentRemove(path) {
 }
 
 export async function draftsList() {
+  const slow = Number(params.get('slowDrafts'));
+  if (slow > 0) await new Promise((r) => setTimeout(r, slow));
   return draftsOff ? [] : sortedDrafts();
 }
 

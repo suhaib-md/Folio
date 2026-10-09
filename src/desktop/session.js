@@ -18,27 +18,40 @@ export function captureSession(state, folder) {
 }
 
 // drafts: paths of the draft tabs (already restored); session: stored
-// settings.session; launch: paths from the command line / a second launch.
-// -> open: in this order (drafts, session tabs, launch paths), each path once;
-// activate: the last launch path, else the stored active tab, else the last
-// restored tab. No file is checked here.
-export function startupOrder({ drafts = [], session = null, launch = [] } = {}) {
+// settings.session. Launch paths are not handled here: they go through
+// openPaths on the open queue, after the restore, and become active as any
+// opened file does.
+// -> open: drafts, then the session tabs they don't cover, each path once;
+// activate: the stored active tab, else the last restored tab; null when the
+// stored active tab was an untitled one (the draft-restored tab stays active).
+// No file is checked here.
+export function startupOrder({ drafts = [], session = null } = {}) {
   const open = [];
   const seen = new Set();
   const add = (entry) => {
     const key = normalizePath(entry.path);
-    if (seen.has(key)) return false;
+    if (seen.has(key)) return;
     seen.add(key);
     open.push(entry);
-    return true;
   };
   for (const path of drafts) if (path != null) add({ path });
   for (const t of session?.tabs ?? []) add(t.mode ? { path: t.path, mode: t.mode } : { path: t.path });
-  for (const path of launch) add({ path });
-  const find = (p) => open.find((o) => normalizePath(o.path) === normalizePath(p))?.path;
   let activate = null;
-  if (launch.length) activate = find(launch[launch.length - 1]);
-  else if (session?.active != null) activate = find(session.active) ?? null;
-  if (activate == null && open.length) activate = open[open.length - 1].path;
-  return { open, activate: activate ?? null, folder: session?.folder ?? null };
+  if (session?.active != null) {
+    activate = open.find((o) => normalizePath(o.path) === normalizePath(session.active))?.path ?? null;
+  }
+  if (activate == null && session?.active != null && open.length) activate = open[open.length - 1].path;
+  return { open, activate, folder: session?.folder ?? null };
 }
+
+// Entries the restore skipped (missing right now) stay in the stored session
+// until the user changes the tab set or the folder. skipped: { tabs, folder }.
+export function mergeSkipped(session, skipped) {
+  if (!skipped) return session;
+  const have = new Set(session.tabs.map((t) => normalizePath(t.path)));
+  const tabs = [...session.tabs, ...skipped.tabs.filter((t) => !have.has(normalizePath(t.path)))];
+  return { ...session, tabs, folder: session.folder ?? skipped.folder ?? null };
+}
+
+// The part of a session the user changes by opening/closing tabs or folders.
+export const sessionShape = (s) => JSON.stringify([s.tabs.map((t) => normalizePath(t.path)).sort(), s.folder]);

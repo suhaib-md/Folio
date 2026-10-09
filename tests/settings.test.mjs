@@ -18,6 +18,11 @@ test('normalize clamps zoom and theme', () => {
   assert.equal(normalize({ autosave: 1 }).autosave, false);
 });
 
+test('normalize: sidebar.visible stays null until chosen', () => {
+  assert.equal(normalize(null).sidebar.visible, null);
+  assert.equal(normalize({ sidebar: { visible: true } }).sidebar.visible, true);
+});
+
 test('normalize: sidebar and session are sanitized', () => {
   const n = normalize({
     sidebar: { visible: false, tab: 'bogus' },
@@ -56,7 +61,7 @@ test('update debounces save (300 ms) and notifies immediately', async () => {
   fire();
   await s.flush();
   assert.equal(saved.length, 1);
-  assert.deepEqual(saved[0].sidebar, { visible: true, tab: 'outline' }); // deep merge keeps visible
+  assert.deepEqual(saved[0].sidebar, { visible: null, tab: 'outline' }); // deep merge keeps visible (null: never toggled)
   assert.equal(saved[0].autosave, true);
   assert.equal(saved[0].zoom, 120);
 });

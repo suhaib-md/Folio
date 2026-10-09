@@ -20,7 +20,7 @@ import { renderSearch, matchOrdinal } from './search.js';
 import { blobToImage, savePastedImage } from './paste-image.js';
 import { createDraftScheduler, restorePlan, restoreDecision } from './drafts.js';
 import { createSettings, zoomStep } from './settings.js';
-import { captureSession, startupOrder } from './session.js';
+import { captureSession, startupOrder, mergeSkipped, sessionShape } from './session.js';
 import { createAutosave } from './autosave.js';
 import { openMenu, closeMenu } from './menu.js';
 import { renderEnhancements } from './diagrams.js';
@@ -87,6 +87,7 @@ let lastSidebarKey = null;
 // changing it, so it comes back when the window widens.
 let sidebarWanted = null;
 let sidebarTab = 'files'; // 'files' | 'outline' | 'search'
+let sidebarChosen = false; // the user (or a stored choice) set sidebarWanted explicitly
 
 let recent = { files: [], folders: [] }; // as last returned by the backend
 let lastRecentKey = null;
@@ -450,7 +451,9 @@ function showOpenError(path) {
 // `fromRecent`: a recent-list entry; failing to read it means it is gone.
 // `silent`: session restore; a file that can't be read is skipped without a
 // banner, and the recent list keeps its order.
+let userOpens = 0; // opens that did not come from the session restore
 async function openPath(path, { fromRecent = false, silent = false, mode = null } = {}) {
+  if (!silent) userOpens += 1;
   const existing = T.findByPath(state, path);
   if (existing) {
     commit((s) => T.activate(s, existing.id));
@@ -526,6 +529,7 @@ async function pickFolderAndOpen() {
 // Show `path` in the sidebar, replacing any open folder. `listed`: its
 // list_tree result, when the caller already has it.
 async function openFolder(path, { listed = null, fromRecent = false, silent = false } = {}) {
+  if (!silent) userOpens += 1;
   let result = listed;
   if (!result) {
     try {
@@ -566,6 +570,7 @@ const sidebarIsShown = () => sidebarIsWanted() && roomy.matches;
 // Ctrl+Shift+B. Hiding it with focus inside moves focus to the document.
 function toggleSidebar() {
   sidebarWanted = !sidebarIsWanted();
+  sidebarChosen = true;
   const hadFocus = sidebarEl.contains(document.activeElement);
   render();
   if (hadFocus && sidebarEl.hidden) {
@@ -580,6 +585,7 @@ function toggleSidebar() {
 function showSidebar(tab, { focus = false } = {}) {
   if (tab) sidebarTab = tab;
   sidebarWanted = true;
+  sidebarChosen = true;
   render();
   if (focus && !sidebarEl.hidden) focusSidebarTab();
 }
@@ -844,18 +850,31 @@ function syncWatch() {
 let sessionLive = false;
 let sessionFrozen = false;
 let sessionKey = null;
+let sidebarKey = null;
+// Entries the restore found missing: kept in the stored session until the
+// user changes the tab set or the folder.
+let skippedSession = null;
+let skippedShape = null;
 
 function syncSession() {
   if (!sessionLive) return;
   if (!sessionFrozen) {
-    const session = captureSession(state, currentFolder());
+    let session = captureSession(state, currentFolder());
+    if (skippedSession) {
+      if (sessionShape(session) === skippedShape) session = mergeSkipped(session, skippedSession);
+      else skippedSession = null;
+    }
     const key = JSON.stringify(session);
     if (key !== sessionKey) {
       sessionKey = key;
       settings.update({ session });
     }
   }
-  settings.update({ sidebar: { visible: sidebarWanted ?? true, tab: sidebarTab } });
+  const sbKey = `${sidebarChosen ? sidebarWanted : null}|${sidebarTab}`;
+  if (sbKey !== sidebarKey) {
+    sidebarKey = sbKey;
+    settings.update({ sidebar: { visible: sidebarChosen ? !!sidebarWanted : null, tab: sidebarTab } });
+  }
 }
 
 const DISK_CHANGED = 'disk-changed'; // "<name> changed on disk." Reload / Keep mine
@@ -992,29 +1011,69 @@ function restoreDraft(draft, file, diskChanged) {
   }));
 }
 
-// Reopen the stored session after the drafts: its tabs (modes kept), then
-// the folder. Missing files and folders are skipped silently; nothing here
-// touches the recent list. Capturing starts when this is done.
+// Reopen the stored session, queued right after the drafts (so before any
+// open-paths event or launch path): its tabs with their modes (also applied
+// to tabs the drafts restored), then the folder. Files are read in parallel
+// and shown with one commit. Missing files and folders are skipped silently
+// (and kept in the stored session); nothing here touches the recent list.
+// Capturing starts when this is done. Never reports an error.
 function restoreSession() {
   return enqueue([{
     path: 'session',
     run: async () => {
       try {
         const session = settings.get().session;
-        const drafts = state.tabs.filter((t) => t.path != null).map((t) => t.path);
-        const plan = startupOrder({ drafts, session, launch: [] });
-        const wanted = new Map(session.tabs.map((t) => [T.normalizePath(t.path), t.mode]));
-        for (const { path } of plan.open) {
-          if (T.findByPath(state, path)) continue;
-          try {
-            await openPath(path, { silent: true, mode: wanted.get(T.normalizePath(path)) });
-          } catch (err) {
-            console.warn(`restoring ${path} failed:`, err);
+        const opensBefore = userOpens;
+        const plan = startupOrder({
+          drafts: state.tabs.filter((t) => t.path != null).map((t) => t.path),
+          session,
+        });
+        const modes = new Map(session.tabs.map((t) => [T.normalizePath(t.path), t.mode]));
+        const toRead = plan.open.map((o) => o.path).filter((p) => !T.findByPath(state, p));
+        const [reads, tree] = await Promise.all([
+          Promise.allSettled(toRead.map((p) => backend.readFile(p))),
+          plan.folder ? backend.listTree(plan.folder).catch((err) => {
+            console.warn(`listTree(${plan.folder}) failed:`, err);
+            return null;
+          }) : null,
+        ]);
+        const skipped = { tabs: [], folder: null };
+        const files = [];
+        reads.forEach((r, i) => {
+          if (r.status === 'fulfilled') files.push({ path: toRead[i], ...r.value });
+          else {
+            console.warn(`readFile(${toRead[i]}) failed:`, r.reason);
+            skipped.tabs.push({ path: toRead[i], mode: modes.get(T.normalizePath(toRead[i])) ?? 'read' });
           }
+        });
+        editor.flush();
+        const before = state;
+        try {
+          commit((s0) => {
+            let s = s0;
+            for (const f of files) s = T.openFile(s, f);
+            for (const t of s.tabs) {
+              const mode = t.path != null ? modes.get(T.normalizePath(t.path)) : null;
+              if (mode && mode !== t.mode) s = T.setMode(s, t.id, mode);
+            }
+            const active = plan.activate && userOpens === opensBefore ? T.findByPath(s, plan.activate) : null;
+            const target = active ? active.id : s0.activeId;
+            return target ? T.activate(s, target) : s;
+          });
+        } catch (err) {
+          state = before;
+          console.error('restoring the session failed:', err);
         }
-        if (plan.folder) await openFolder(plan.folder, { silent: true });
-        const active = session.tabs.length && plan.activate && T.findByPath(state, plan.activate);
-        if (active) commit((s) => T.activate(s, active.id));
+        if (plan.folder) {
+          if (tree) await openFolder(plan.folder, { silent: true, listed: tree });
+          else skipped.folder = plan.folder;
+        }
+        if (skipped.tabs.length || skipped.folder) {
+          skippedSession = skipped;
+          skippedShape = sessionShape(captureSession(state, currentFolder()));
+        }
+      } catch (err) {
+        console.error('restoring the session failed:', err);
       } finally {
         sessionLive = true;
         render();
@@ -1963,7 +2022,10 @@ async function startup() {
   // Stored sidebar state: hidden stays hidden; shown means "while a folder is open".
   const sb = settings.get().sidebar;
   sidebarTab = sb.tab;
-  if (!sb.visible) sidebarWanted = false;
+  if (sb.visible !== null) {
+    sidebarWanted = sb.visible;
+    sidebarChosen = true;
+  }
   render();
   trackRecent(backend.recentGet(), 'recentGet');
   await backend.onCloseRequested(onCloseRequested);
@@ -1978,6 +2040,8 @@ async function startup() {
   // open-paths event), let them start once the listeners below exist.
   let listenersReady;
   const restoring = restoreDrafts(new Promise((r) => { listenersReady = r; }));
+  // The session comes next in the queue: drafts, session, then everything else.
+  const restoringSession = restoreSession();
   try {
     await backend.onFileChanged((change) => {
       onFileChanged(change).catch((err) => console.error('file change failed:', err));
@@ -1993,7 +2057,7 @@ async function startup() {
     listenersReady(); // even if a subscription failed: never leave the queue waiting
   }
   await restoring;
-  await restoreSession();
+  await restoringSession;
   await openPaths(await backend.launchPaths(), { folders: true });
 }
 

@@ -19,7 +19,9 @@ export const DEFAULTS = Object.freeze({
   zoom: 100,
   theme: 'system',
   autosave: false,
-  sidebar: Object.freeze({ visible: true, tab: 'files' }),
+  // visible: null until the user shows/hides the sidebar (then the 0.2 rule:
+  // shown while a folder is open)
+  sidebar: Object.freeze({ visible: null, tab: 'files' }),
   session: Object.freeze({ tabs: Object.freeze([]), active: null, folder: null }),
 });
 
@@ -47,7 +49,9 @@ export function normalize(raw) {
     theme: THEMES.includes(r.theme) ? r.theme : DEFAULTS.theme,
     autosave: r.autosave === undefined ? DEFAULTS.autosave : r.autosave === true || r.autosave === 'true',
     sidebar: {
-      visible: sb.visible === undefined ? DEFAULTS.sidebar.visible : sb.visible !== false && sb.visible !== 'false',
+      visible: sb.visible === undefined || sb.visible === null
+        ? null
+        : sb.visible !== false && sb.visible !== 'false',
       tab: SIDEBAR_TABS.includes(sb.tab) ? sb.tab : DEFAULTS.sidebar.tab,
     },
     session: { tabs, active: str(se.active), folder: str(se.folder) },
