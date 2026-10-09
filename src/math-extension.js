@@ -37,7 +37,15 @@ const INLINE = /^\$(?![\s$])((?:\\.|[^\\$\n])+?)(?<!\s)\$(?!\d)/;
 // and a frame is never shared with another run (nested runs get their own).
 // Strings are never compared by content. The one run already in progress when
 // the wrapper is installed gets an implicit frame at the bottom of the stack;
-// every later run is wrapped, so no unwrapped run can see it. A length that
+// every later run is wrapped, so no unwrapped run can see it.
+//
+// Installation: marked tries extension tokenizers at the very first iteration
+// of every run, before anything that could start a nested run (blockquote,
+// list item, em/strong/link content). Both extension tokenizers call
+// stacksFor() first, so the wrappers always go in while the OUTERMOST run is
+// the active one, and the implicit frame is that run's. (Installing it from
+// `start` alone was unsound: the first `start` call can come from inside a
+// nested run, whose frame would then be shared with the outer run.) A length that
 // grows (cannot happen within a run) resets the frame as a safeguard.
 const lexers = new WeakMap(); // lexer -> { block: Frame[], inline: Frame[] }
 const newFrame = () => ({ len: Infinity, fromEnd: -1, known: false });
@@ -106,6 +114,7 @@ export function createMathExtension() {
           return next(this.lexer, 'block', src, scanBlock, 1);
         },
         tokenizer(src) {
+          stacksFor(this.lexer); // see "Installation" above
           BLOCK.lastIndex = 0;
           const m = BLOCK.exec(src);
           if (!m || !m[1].trim()) return undefined;
@@ -120,6 +129,7 @@ export function createMathExtension() {
           return next(this.lexer, 'inline', src, (t) => t.indexOf('$'), 0);
         },
         tokenizer(src) {
+          stacksFor(this.lexer); // see "Installation" above
           let m = INLINE_DISPLAY.exec(src);
           if (m && m[1].trim()) return { type: 'mathInline', raw: m[0], text: m[1].trim(), display: true };
           m = INLINE.exec(src);

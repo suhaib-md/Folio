@@ -167,8 +167,20 @@ test('memoised start equals the unmemoised reference on random documents', () =>
   ];
   const bits = ['$x$', '$a+b$', '$$y$$', '$5', '$10 ', 'plain words ', '`$c$`', '\\$', '*em $z$ em*', '$ x$', '$x $', '[l $q$](u)', '$$'];
   const docs = [];
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < 2000; i++) {
     const parts = [];
+    // Often start with a nested construct, then a shorter outer paragraph and
+    // trailing inline and block maths (nested runs must not leak their memo).
+    if (rnd(3) === 0) {
+      const first = [
+        '> quote $x$ lots of text here and more' + tails[rnd(2)],
+        '- item with quite a long body of text here' + tails[rnd(2)] + '\n- second $y$',
+        '# *xxxx $a$ zzzzzzzzzz* y$b$',
+        '## **strong $s$ wwwwwwwww** and $t$',
+        '> - nested [link $l$ text](u) item',
+      ];
+      parts.push(first[rnd(first.length)], 'para $p$', 'tail\n$$\nx\n$$', 'end $e$');
+    }
     const nb = 2 + rnd(6);
     for (let b = 0; b < nb; b++) {
       const k = rnd(8);
@@ -189,4 +201,23 @@ test('memoised start equals the unmemoised reference on random documents', () =>
   const a = new Marked(createMathExtension());
   const b = new Marked(reference(createMathExtension()));
   for (const d of docs) assert.equal(a.parse(d), b.parse(d), JSON.stringify(d));
+});
+
+test('nested first runs do not leak their memo into the outer run', () => {
+  const a = new Marked(createMathExtension());
+  const b = new Marked(reference(createMathExtension()));
+  const cases = [
+    '> quote $x$ lots of text here and more\n\npara\n$$\nx\n$$\n',
+    '- item with quite a long body of text here\n\npara\n$$\nx\n$$\n',
+    '# *xxxx $a$ zzzzzzzzzz* y$b$\n',
+  ];
+  for (const c of cases) assert.equal(a.parse(c), b.parse(c), JSON.stringify(c));
+  assert.equal(dom(math(cases[0])).querySelectorAll('div.math-display').length, 1);
+  assert.equal(dom(math(cases[2])).querySelectorAll('.math-inline').length, 2);
+  // Same for the outline's directly-driven lexer.
+  const d = dom(math(cases[2]));
+  assert.deepEqual(
+    extractHeadings(cases[2], { math: true }).map((h) => h.id),
+    [...d.querySelectorAll('h1')].map((e) => e.id.replace(/^user-content-/, '')),
+  );
 });
