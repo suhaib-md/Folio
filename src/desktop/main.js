@@ -20,6 +20,7 @@ import { renderSearch, matchOrdinal } from './search.js';
 import { blobToImage, savePastedImage } from './paste-image.js';
 import { createDraftScheduler, restorePlan, restoreDecision } from './drafts.js';
 import { createSettings, zoomStep } from './settings.js';
+import { captureSession, startupOrder } from './session.js';
 import { createAutosave } from './autosave.js';
 import { openMenu, closeMenu } from './menu.js';
 import { renderEnhancements } from './diagrams.js';
@@ -447,7 +448,9 @@ function showOpenError(path) {
 }
 
 // `fromRecent`: a recent-list entry; failing to read it means it is gone.
-async function openPath(path, { fromRecent = false } = {}) {
+// `silent`: session restore; a file that can't be read is skipped without a
+// banner, and the recent list keeps its order.
+async function openPath(path, { fromRecent = false, silent = false, mode = null } = {}) {
   const existing = T.findByPath(state, path);
   if (existing) {
     commit((s) => T.activate(s, existing.id));
@@ -458,6 +461,7 @@ async function openPath(path, { fromRecent = false } = {}) {
     file = await backend.readFile(path);
   } catch (err) {
     console.warn(`readFile(${path}) failed:`, err);
+    if (silent) return;
     if (fromRecent && isNotFound(err)) forgetRecent(path);
     else showOpenError(path);
     return;
@@ -465,14 +469,17 @@ async function openPath(path, { fromRecent = false } = {}) {
   editor.flush(); // so `before` holds the latest typed text
   const before = state;
   try {
-    commit((s) => T.openFile(s, { path, ...file }));
+    commit((s) => {
+      const opened = T.openFile(s, { path, ...file });
+      return mode && mode !== 'read' ? T.setMode(opened, opened.activeId, mode) : opened;
+    });
   } catch (err) {
     // Don't keep a tab we couldn't show.
     state = before;
     render();
     throw err;
   }
-  addRecent(path, 'file');
+  if (!silent) addRecent(path, 'file');
 }
 
 // A dropped or launched path: list_tree answers "not a folder" for a file,
@@ -518,13 +525,14 @@ async function pickFolderAndOpen() {
 
 // Show `path` in the sidebar, replacing any open folder. `listed`: its
 // list_tree result, when the caller already has it.
-async function openFolder(path, { listed = null, fromRecent = false } = {}) {
+async function openFolder(path, { listed = null, fromRecent = false, silent = false } = {}) {
   let result = listed;
   if (!result) {
     try {
       result = await backend.listTree(path);
     } catch (err) {
       console.warn(`listTree(${path}) failed:`, err);
+      if (silent) return;
       if (fromRecent && isNotFound(err)) forgetRecent(path);
       else showBanner(`Couldn't open ${basename(path)}.`);
       return;
@@ -539,9 +547,9 @@ async function openFolder(path, { listed = null, fromRecent = false } = {}) {
   folder = { path, root: result.root, truncated: !!result.truncated };
   folderSeq += 1;
   treeVersion += 1;
-  sidebarWanted = true;
+  if (!silent) sidebarWanted = true;
   render();
-  addRecent(path, 'folder');
+  if (!silent) addRecent(path, 'folder');
 }
 
 function toggleFolder(path) {
@@ -778,8 +786,12 @@ async function onCloseRequested() {
   editor.flush();
   if (windowClosing || closing.size || modalOpen) return false;
   windowClosing = true;
+  // The session is what was open before the prompts start closing tabs.
+  syncSession();
+  sessionFrozen = true;
+  let ok = false;
   try {
-    const ok = await closeWindowFlow();
+    ok = await closeWindowFlow();
     if (ok) {
       autosave.cancelAll();
       await settleDrafts(1500);
@@ -791,6 +803,10 @@ async function onCloseRequested() {
     return false;
   } finally {
     windowClosing = false;
+    if (!ok) {
+      sessionFrozen = false;
+      syncSession();
+    }
   }
 }
 
@@ -819,6 +835,27 @@ function syncWatch() {
   watchChain = watchChain
     .then(() => backend.watch(files, folder))
     .catch((err) => console.warn('watch failed:', err));
+}
+
+// Session restore: settings.session follows the path tabs (with modes), the
+// active tab and the folder; settings.sidebar follows the sidebar. Not before
+// the restore has read the stored session, and not once the window is closing
+// (closing tabs one by one must not shrink it).
+let sessionLive = false;
+let sessionFrozen = false;
+let sessionKey = null;
+
+function syncSession() {
+  if (!sessionLive) return;
+  if (!sessionFrozen) {
+    const session = captureSession(state, currentFolder());
+    const key = JSON.stringify(session);
+    if (key !== sessionKey) {
+      sessionKey = key;
+      settings.update({ session });
+    }
+  }
+  settings.update({ sidebar: { visible: sidebarWanted ?? true, tab: sidebarTab } });
 }
 
 const DISK_CHANGED = 'disk-changed'; // "<name> changed on disk." Reload / Keep mine
@@ -953,6 +990,37 @@ function restoreDraft(draft, file, diskChanged) {
     draftId: draft.id, path: d.path, title: d.title, text: draft.text, savedText: d.savedText,
     eol: draft.eol, bom: !!draft.bom, banner: { kind: RECOVERED, text: d.bannerText },
   }));
+}
+
+// Reopen the stored session after the drafts: its tabs (modes kept), then
+// the folder. Missing files and folders are skipped silently; nothing here
+// touches the recent list. Capturing starts when this is done.
+function restoreSession() {
+  return enqueue([{
+    path: 'session',
+    run: async () => {
+      try {
+        const session = settings.get().session;
+        const drafts = state.tabs.filter((t) => t.path != null).map((t) => t.path);
+        const plan = startupOrder({ drafts, session, launch: [] });
+        const wanted = new Map(session.tabs.map((t) => [T.normalizePath(t.path), t.mode]));
+        for (const { path } of plan.open) {
+          if (T.findByPath(state, path)) continue;
+          try {
+            await openPath(path, { silent: true, mode: wanted.get(T.normalizePath(path)) });
+          } catch (err) {
+            console.warn(`restoring ${path} failed:`, err);
+          }
+        }
+        if (plan.folder) await openFolder(plan.folder, { silent: true });
+        const active = session.tabs.length && plan.activate && T.findByPath(state, plan.activate);
+        if (active) commit((s) => T.activate(s, active.id));
+      } finally {
+        sessionLive = true;
+        render();
+      }
+    },
+  }]);
 }
 
 // One job on the open queue, queued before anything else can be, so
@@ -1095,6 +1163,7 @@ function renderNow() {
   }
 
   syncWatch();
+  syncSession();
   syncOutlineCurrent();
 
   const title = T.windowTitle(state);
@@ -1891,6 +1960,10 @@ window.addEventListener('drop', (e) => e.preventDefault());
 async function startup() {
   await settings.load();
   syncAppearance();
+  // Stored sidebar state: hidden stays hidden; shown means "while a folder is open".
+  const sb = settings.get().sidebar;
+  sidebarTab = sb.tab;
+  if (!sb.visible) sidebarWanted = false;
   render();
   trackRecent(backend.recentGet(), 'recentGet');
   await backend.onCloseRequested(onCloseRequested);
@@ -1920,6 +1993,7 @@ async function startup() {
     listenersReady(); // even if a subscription failed: never leave the queue waiting
   }
   await restoring;
+  await restoreSession();
   await openPaths(await backend.launchPaths(), { folders: true });
 }
 
