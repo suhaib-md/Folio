@@ -15,6 +15,7 @@ import { openQuickOpen } from './quickopen.js';
 import { createFindBar } from './find.js';
 import { renderOutline } from './outline-view.js';
 import { extractHeadings, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
+import { renderSearch, matchOrdinal } from './search.js';
 
 const renderMarkdown = createRenderer(window);
 const $ = (id) => document.getElementById(id);
@@ -37,7 +38,6 @@ const sidebarEl = $('sidebar');
 const filesTree = $('files-tree');
 const filesEmpty = $('files-empty');
 const outlinePanel = $('sidebar-panel-outline');
-const searchEmpty = $('search-empty');
 const searchPanel = $('search-panel');
 const SIDEBAR_TABS = ['files', 'outline', 'search'];
 const sidebarTabEl = (name) => $(`sidebar-tab-${name}`);
@@ -325,7 +325,10 @@ async function openFolder(path, { listed = null, fromRecent = false } = {}) {
   }
   // Re-opening the same folder keeps what was expanded.
   const same = folder && T.normalizePath(folder.path) === T.normalizePath(path);
-  if (!same) expanded = new Set();
+  if (!same) {
+    expanded = new Set();
+    resetSearch();
+  }
   folder = { path, root: result.root, truncated: !!result.truncated };
   folderSeq += 1;
   treeVersion += 1;
@@ -789,7 +792,9 @@ function renderNow() {
 // that have been left (a hidden panel forgets its scroll).
 let laidOutTab = null;
 const panelScroll = new Map();
-const scrollerOf = (name) => (name === 'files' ? filesTree.querySelector('.tree-scroll') : name === 'outline' ? outlinePanel : null);
+const scrollerOf = (name) => (name === 'files'
+  ? filesTree.querySelector('.tree-scroll')
+  : name === 'outline' ? outlinePanel : name === 'search' ? searchPanel.querySelector('.search-results') : null);
 
 // Only the selected tab's content is built. The tree is rebuilt only when it,
 // what is expanded, or the active file changed.
@@ -831,8 +836,7 @@ function renderSidebar(tab) {
       }
     }
   } else if (sidebarTab === 'search') {
-    searchEmpty.hidden = !!folder;
-    searchPanel.hidden = !folder;
+    if (searchRenderedVersion !== searchVersion) drawSearch();
   }
   if (sidebarTab === 'outline') syncOutline(tab);
   else stopOutline();
@@ -843,6 +847,135 @@ function renderSidebar(tab) {
     if (scroller && top) scroller.scrollTop = top;
   }
   laidOutTab = sidebarTab;
+}
+
+// ---- folder search -------------------------------------------------------
+
+const SEARCH_DEBOUNCE = 250;
+// Request ids must keep increasing across webview reloads (the backend
+// cancels anything older than the newest it has seen): seed from the clock.
+let searchSeq = Date.now();
+let search = newSearch();
+let searchTimer = null;
+let searchVersion = 0; // bumped when what the panel shows changes
+let searchRenderedVersion = -1;
+
+function newSearch() {
+  return { query: '', matchCase: false, results: null, truncated: false, running: false, collapsed: new Set() };
+}
+
+// A different folder opened: its search starts empty.
+function resetSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = null;
+  searchSeq += 1; // any answer still on its way is stale
+  search = newSearch();
+  searchVersion += 1;
+}
+
+function drawSearch() {
+  searchRenderedVersion = searchVersion;
+  renderSearch(searchPanel, { ...search, folder: folder?.path ?? null }, {
+    onQuery: (q, now) => {
+      search.query = q;
+      scheduleSearch(now);
+    },
+    onToggleCase: () => {
+      search.matchCase = !search.matchCase;
+      scheduleSearch(true);
+    },
+    onRefresh: () => scheduleSearch(true),
+    onToggleFile: (path) => {
+      if (!search.collapsed.delete(path)) search.collapsed.add(path);
+      searchVersion += 1;
+      drawSearch();
+    },
+    onPick: openSearchResult,
+  });
+}
+
+function scheduleSearch(now) {
+  clearTimeout(searchTimer);
+  searchTimer = null;
+  if (now) runSearch();
+  else searchTimer = setTimeout(runSearch, SEARCH_DEBOUNCE);
+}
+
+async function runSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = null;
+  const id = ++searchSeq;
+  const seq = folderSeq;
+  const { query, matchCase } = search;
+  if (!folder || !query) {
+    search = { ...search, results: null, truncated: false, running: false };
+    searchVersion += 1;
+    if (sidebarTab === 'search') drawSearch();
+    return;
+  }
+  search = { ...search, running: true };
+  searchVersion += 1;
+  if (sidebarTab === 'search') drawSearch();
+  const stale = () => id !== searchSeq || seq !== folderSeq;
+  try {
+    const res = await backend.searchFolder(folder.path, query, matchCase, id);
+    if (stale()) return;
+    search = { ...search, results: res.files, truncated: !!res.truncated, running: false, collapsed: new Set() };
+  } catch (err) {
+    if (stale() || err === 'cancelled') return;
+    console.warn('searchFolder failed:', err);
+    search = { ...search, results: null, truncated: false, running: false };
+    showBanner(`Couldn't search ${basename(folder.path)}.`);
+  }
+  searchVersion += 1;
+  if (sidebarTab === 'search') drawSearch();
+}
+
+// Open `path`, wait for it to be the active, rendered tab, then `then(tab)`.
+// Goes through the open queue, so it waits for modals like any other open.
+function openThen(path, then) {
+  return enqueue([{
+    path,
+    run: async () => {
+      await openPath(path);
+      const tab = getActiveTab();
+      if (tab?.path && T.normalizePath(tab.path) === T.normalizePath(path)) then(tab);
+    },
+  }]);
+}
+
+// A result row: Edit/Split select the match; Read finds it in the rendered
+// document (the Nth occurrence, N = matches before its line + its place on
+// the line).
+function openSearchResult(path, line, match, indexInLine = 0) {
+  const { query, matchCase } = search;
+  return openThen(path, (tab) => {
+    if (showsEditor(view)) {
+      editor.selectRange(line, match.col, match.col + (match.end - match.start));
+      editor.focus();
+    } else {
+      find.open(query, matchOrdinal(tab.text, line, query, matchCase) + indexInLine, { matchCase });
+    }
+  });
+}
+
+// `file.md#section`: after the open settles, bring the heading into view.
+function scrollToFragment(tab, frag) {
+  let id = frag;
+  try {
+    id = decodeURIComponent(frag);
+  } catch {
+    // keep as written
+  }
+  id = id.replace(/^user-content-/, '');
+  if (!id) return;
+  const heading = extractHeadings(tab.text).find((h) => h.id === id);
+  if (!heading) return; // unknown anchor: leave the scroll alone
+  if (showsDoc(view)) scrollDocToId(id);
+  if (showsEditor(view)) {
+    editor.revealLine(heading.line);
+    if (view === 'edit') editor.focus();
+  }
 }
 
 // ---- outline -------------------------------------------------------------
@@ -1187,7 +1320,11 @@ doc.addEventListener('click', (e) => {
     backend.openExternal(href).catch((err) => console.warn('openExternal failed:', err));
   } else {
     const p = resolveRelative(getActiveTab()?.path, href);
-    if (p && isMarkdownPath(p)) openPaths([p]);
+    if (p && isMarkdownPath(p)) {
+      const hash = href.indexOf('#');
+      if (hash >= 0 && hash < href.length - 1) openThen(p, (tab) => scrollToFragment(tab, href.slice(hash + 1)));
+      else openPaths([p]);
+    }
   }
 });
 doc.addEventListener('auxclick', (e) => {
@@ -1217,6 +1354,18 @@ function openFind() {
     if (text.trim() && !/[\r\n]/.test(text)) query = text;
   }
   find.open(query);
+}
+
+// Ctrl+Shift+F: the Search tab, with the query box ready to type in.
+function focusSearch() {
+  showSidebar('search');
+  const input = searchPanel.querySelector('.search-input');
+  if (input && !sidebarEl.hidden) {
+    input.focus();
+    input.select();
+  } else if (!sidebarEl.hidden) {
+    sidebarTabEl('search').focus();
+  }
 }
 
 function openQuickOpenPalette() {
@@ -1265,6 +1414,8 @@ window.addEventListener('keydown', (e) => {
     action = plain ? pickAndOpen : pickFolderAndOpen;
   } else if (key === 'b' && e.shiftKey) {
     action = toggleSidebar;
+  } else if (key === 'f' && e.shiftKey) {
+    action = focusSearch;
   } else if (key === 'l' && e.shiftKey) {
     action = () => showSidebar('outline', { focus: true });
   } else if (key === 'p' && plain) {

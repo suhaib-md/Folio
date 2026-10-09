@@ -259,9 +259,13 @@ export function createFindBar(root, getDocEl) {
   closeBtn.addEventListener('click', () => close());
 
   // Show the bar. `query` (when given) replaces the text; `nth` (0-based)
-  // picks the match to land on.
-  function show(query, nth) {
+  // picks the match to land on; `opts.matchCase` (when given) sets Aa.
+  function show(query, nth, opts) {
     open = true;
+    if (opts && typeof opts.matchCase === 'boolean') {
+      matchCase = opts.matchCase;
+      caseBtn.setAttribute('aria-pressed', String(matchCase));
+    }
     root.hidden = false;
     if (query !== undefined) input.value = query;
     input.focus();

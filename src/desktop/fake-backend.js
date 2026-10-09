@@ -267,8 +267,9 @@ function lineMatches(lineNo, rawLine, query, matchCase, out, limit, total) {
 }
 
 export async function searchFolder(folder, query, matchCase, requestId) {
-  latestSearch = requestId;
-  const cancelled = () => latestSearch !== requestId;
+  // Like the Rust side: a request is cancelled once a newer (greater) id exists.
+  latestSearch = Math.max(latestSearch, requestId);
+  const cancelled = () => latestSearch > requestId;
   await Promise.resolve(); // keep the async shape: a newer call can overtake
   if (cancelled()) throw 'cancelled';
   if (!query) return { requestId, files: [], truncated: false };

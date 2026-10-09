@@ -26,10 +26,10 @@ test('searchFolder: order, skip rules, offsets', async () => {
 test('searchFolder: case folding, empty query, window', async () => {
   const ci = await searchFolder('/s', 'foo', false, 2);
   assert.equal(ci.files.find((f) => f.path === '/s/a.md').matches.length, 3);
-  assert.equal((await searchFolder('/s', 'οδυσσευς', false, 5)).files[0].matches.length, 1);
-  assert.equal((await searchFolder('/s', 'İstanbul', false, 6)).files[0].matches[0].start, 9);
-  assert.deepEqual(await searchFolder('/s', '', false, 3), { requestId: 3, files: [], truncated: false });
-  const r = await searchFolder('/s', 'needle', false, 4);
+  assert.equal((await searchFolder('/s', 'οδυσσευς', false, 3)).files[0].matches.length, 1);
+  assert.equal((await searchFolder('/s', 'İstanbul', false, 4)).files[0].matches[0].start, 9);
+  assert.deepEqual(await searchFolder('/s', '', false, 5), { requestId: 5, files: [], truncated: false });
+  const r = await searchFolder('/s', 'needle', false, 6);
   const m = r.files[0].matches[0];
   assert.equal([...m.text].length, 200);
   assert.deepEqual([m.start, m.end], [60, 66]);
@@ -42,8 +42,15 @@ test('searchFolder: a newer request rejects the older one', async () => {
   assert.equal((await newer).requestId, 11);
 });
 
+test('searchFolder: an older request arriving later is cancelled, not the newer', async () => {
+  const newer = searchFolder('/s', 'foo', true, 31);
+  const older = searchFolder('/s', 'foo', true, 30);
+  await assert.rejects(older, (e) => e === 'cancelled');
+  assert.equal((await newer).requestId, 31);
+});
+
 test('searchFolder: UTF-16 offsets with astral chars', async () => {
-  const r = await searchFolder('/s', 'foo', true, 20);
+  const r = await searchFolder('/s', 'foo', true, 40);
   const m = r.files.find((f) => f.path === '/s/emoji.md').matches[0];
   assert.deepEqual([m.col, m.start, m.end], [3, 3, 6]);
   assert.equal(m.text.slice(m.start, m.end), 'foo');

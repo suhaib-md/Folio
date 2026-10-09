@@ -51,6 +51,16 @@ test('next/previous wrap and nth', () => {
   assert.equal(count.textContent, '3 of 3');
 });
 
+test('open() can set match case', () => {
+  const { bar, d, count } = setup('<p>Foo foo</p>');
+  bar.open('foo', 0, { matchCase: true });
+  assert.equal(count.textContent, '1 of 1');
+  assert.equal(d.querySelector('.find-case').getAttribute('aria-pressed'), 'true');
+  bar.open('foo', 0, { matchCase: false });
+  assert.equal(count.textContent, '1 of 2');
+  assert.equal(d.querySelector('.find-case').getAttribute('aria-pressed'), 'false');
+});
+
 test('hidden text is skipped; close hides', () => {
   const { bar, d, count } = setup('<p>x</p><p style="display:none">x</p>');
   bar.open('x');
