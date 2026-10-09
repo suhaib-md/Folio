@@ -242,23 +242,36 @@ function syncAppearance() {
   if (key === appliedLook) return;
   appliedLook = key;
   applyAppearance({ zoom, theme });
+  // Heading positions move with the text size.
+  requestAnimationFrame(() => syncOutlineCurrent(true));
 }
 settings.onChange(syncAppearance);
+
+// The theme actually showing: 'light' | 'dark' (for Mermaid and anything else
+// that can't read the CSS variables).
+export function effectiveTheme() {
+  const forced = document.documentElement.dataset.theme;
+  if (forced === 'light' || forced === 'dark') return forced;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 function zoomBy(dir) {
   settings.update({ zoom: zoomStep(settings.get().zoom, dir) });
 }
 
-// Ctrl+wheel over the document or editor: one step per wheel event, throttled
-// so a free-spinning wheel doesn't race through the range.
-let lastWheelZoom = 0;
+// Ctrl+wheel over the document or editor: deltaY accumulates and steps once
+// per 100 units, so a free-spinning wheel or trackpad pinch can't race
+// through the range.
+let wheelAcc = 0;
 function onZoomWheel(e) {
   if (!e.ctrlKey) return;
   e.preventDefault(); // also keeps the WebView's own zoom away
-  const now = performance.now();
-  if (now - lastWheelZoom < 50 || e.deltaY === 0) return;
-  lastWheelZoom = now;
-  zoomBy(e.deltaY < 0 ? 1 : -1);
+  if (Math.sign(e.deltaY) !== Math.sign(wheelAcc)) wheelAcc = 0;
+  wheelAcc += e.deltaY;
+  if (Math.abs(wheelAcc) < 100) return;
+  const dir = wheelAcc < 0 ? 1 : -1;
+  wheelAcc = 0;
+  zoomBy(dir);
 }
 for (const el of [content, editorEl]) el.addEventListener('wheel', onZoomWheel, { passive: false });
 
@@ -284,7 +297,8 @@ function moreMenuItems() {
     'separator',
     { label: 'Zoom in', onSelect: () => zoomBy(1) },
     { label: 'Zoom out', onSelect: () => zoomBy(-1) },
-    { label: `Reset zoom (${zoom}%)`, onSelect: () => zoomBy(0) },
+    { label: 'Reset zoom', onSelect: () => zoomBy(0) },
+    { label: `Zoom: ${zoom}%`, disabled: true },
     'separator',
     { label: 'About Folio', onSelect: showAbout },
   ];
@@ -1761,10 +1775,13 @@ window.addEventListener('keydown', (e) => {
   if (e.altKey && key !== '\\') return;
   const plain = !e.shiftKey;
   let action;
-  const zoomDir = e.altKey ? null : // (AltGr: key "\\" can sit on the Minus code)
-    key === '=' || key === '+' || e.code === 'Equal' || e.code === 'NumpadAdd' ? 1
-    : key === '-' || e.code === 'Minus' || e.code === 'NumpadSubtract' ? -1
-    : key === '0' || e.code === 'Digit0' || e.code === 'Numpad0' ? 0
+  // Ctrl+Shift+= is Ctrl++; Shift is ignored by the code matches otherwise,
+  // so Ctrl+Shift+0 / Ctrl+Shift+- don't zoom. Alt: AltGr can put "\\" on a
+  // Minus code.
+  const zoomDir = e.altKey ? null
+    : key === '=' || key === '+' || e.code === 'Equal' || (plain && e.code === 'NumpadAdd') ? 1
+    : plain && (key === '-' || e.code === 'Minus' || e.code === 'NumpadSubtract') ? -1
+    : plain && (key === '0' || e.code === 'Digit0' || e.code === 'Numpad0') ? 0
     : null;
   if (zoomDir !== null) {
     action = () => zoomBy(zoomDir);

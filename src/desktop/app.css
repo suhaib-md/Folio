@@ -1,3 +1,15 @@
+:root {
+  --backdrop: rgb(0 0 0 / 0.32);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.24);
+  --shadow-find: 0 4px 14px rgb(0 0 0 / 0.16);
+  --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.18);
+  --find-none: #cf222e;
+  --find-hl-bg: #fff2a8;
+  --find-hl-fg: #1f2328;
+  --find-cur-bg: #ff9632;
+  --find-cur-fg: #1f2328;
+}
+
 /* Manual theme (desktop only; the web viewer follows the system). Light is
    the default :root, and styles.css skips its dark block for data-theme="light". */
 :root[data-theme="dark"] {
@@ -20,6 +32,15 @@
   --hl-attr: #79c0ff;
   --hl-tag: #7ee787;
   --hl-variable: #ffa657;
+  --backdrop: rgb(0 0 0 / 0.55);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.6);
+  --shadow-find: 0 4px 14px rgb(0 0 0 / 0.5);
+  --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.5);
+  --find-none: #ff7b72;
+  --find-hl-bg: #6b5d12;
+  --find-hl-fg: #f0f6fc;
+  --find-cur-bg: #c2570c;
+  --find-cur-fg: #fff;
   color-scheme: dark;
 }
 
@@ -572,7 +593,7 @@ main.content {
   align-items: flex-start;
   justify-content: center;
   padding: 18vh 16px 16px;
-  background: rgb(0 0 0 / 0.32);
+  background: var(--backdrop);
 }
 .modal {
   width: 100%;
@@ -582,7 +603,7 @@ main.content {
   border-radius: 8px;
   background: var(--bg);
   color: var(--fg);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.24);
+  box-shadow: var(--shadow-lg);
 }
 .modal-title {
   margin: 0 0 20px;
@@ -600,10 +621,6 @@ main.content {
   gap: 8px;
 }
 .modal-actions .btn { padding: 6px 16px; font-size: 14px; }
-@media (prefers-color-scheme: dark) {
-  .modal-backdrop { background: rgb(0 0 0 / 0.55); }
-  .modal { box-shadow: 0 12px 32px rgb(0 0 0 / 0.6); }
-}
 
 /* Find bar (Read mode): pinned over the top edge of the document pane */
 .find-bar {
@@ -619,7 +636,7 @@ main.content {
   border-radius: 8px;
   background: var(--bg);
   color: var(--fg);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 0.16);
+  box-shadow: var(--shadow-find);
 }
 .find-bar[hidden] { display: none; }
 .find-input {
@@ -642,7 +659,7 @@ main.content {
   white-space: nowrap;
   text-align: center;
 }
-.find-none .find-count { color: #cf222e; }
+.find-none .find-count { color: var(--find-none); }
 .find-btn {
   min-width: 28px;
   height: 28px;
@@ -663,14 +680,8 @@ main.content {
   .find-bar { left: 8px; right: 8px; }
   .find-input { flex: 1 1 auto; width: auto; }
 }
-::highlight(folio-find) { background-color: #fff2a8; color: #1f2328; }
-::highlight(folio-find-current) { background-color: #ff9632; color: #1f2328; }
-@media (prefers-color-scheme: dark) {
-  .find-bar { box-shadow: 0 4px 14px rgb(0 0 0 / 0.5); }
-  .find-none .find-count { color: #ff7b72; }
-  ::highlight(folio-find) { background-color: #6b5d12; color: #f0f6fc; }
-  ::highlight(folio-find-current) { background-color: #c2570c; color: #fff; }
-}
+::highlight(folio-find) { background-color: var(--find-hl-bg); color: var(--find-hl-fg); }
+::highlight(folio-find-current) { background-color: var(--find-cur-bg); color: var(--find-cur-fg); }
 /* Leave room under the open find bar so it never covers the first lines. */
 .find-bar:not([hidden]) ~ main.content .column { padding-top: 56px; }
 
@@ -685,7 +696,7 @@ main.content {
   border-radius: 8px;
   background: var(--bg);
   color: var(--fg);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.24);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 .quickopen-input {
@@ -728,9 +739,6 @@ main.content {
   color: var(--muted);
 }
 .quickopen-empty { padding: 14px; font-size: 14px; color: var(--muted); }
-@media (prefers-color-scheme: dark) {
-  .quickopen { box-shadow: 0 12px 32px rgb(0 0 0 / 0.6); }
-}
 
 /* ⋯ menu */
 .more-btn {
@@ -760,7 +768,7 @@ main.content {
   border-radius: 8px;
   background: var(--bg);
   color: var(--fg);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  box-shadow: var(--shadow-menu);
   font-size: 13px;
   user-select: none;
 }
@@ -779,6 +787,3 @@ main.content {
 .menu-label { flex: 1; }
 .menu-arrow { flex: none; margin-left: 12px; font-size: 11px; }
 .menu-separator { height: 1px; margin: 4px 2px; background: var(--border); }
-@media (prefers-color-scheme: dark) {
-  .menu { box-shadow: 0 8px 24px rgb(0 0 0 / 0.5); }
-}

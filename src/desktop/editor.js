@@ -18,8 +18,9 @@ import { languages } from '@codemirror/language-data';
 import { tags as t } from '@lezer/highlight';
 import { toggleWrap, insertLink } from './format.js';
 
-// Colours come from the theme variables in src/styles.css, so light and dark
-// follow prefers-color-scheme with no editor-side switching.
+// Colours come from the theme variables (src/styles.css, plus the forced
+// themes in app.css), so light, dark and the manual theme need no
+// editor-side switching; font size scales with --doc-zoom.
 const mix = (v, pct) => `color-mix(in srgb, var(${v}) ${pct}%, transparent)`;
 
 const theme = EditorView.theme({
