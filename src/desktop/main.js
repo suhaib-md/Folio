@@ -7,9 +7,11 @@ import { createEditor } from './editor.js';
 import { confirmSave, setModalHooks } from './modal.js';
 import { runWindowClose } from './closing.js';
 import { decide } from './reload.js';
-import { basename, resolveRelative, isMarkdownPath } from './paths.js';
+import { basename, dirname, resolveRelative, isMarkdownPath } from './paths.js';
 import { renderTree } from './sidebar.js';
 import { renderRecent } from './recent.js';
+import { flattenTree } from './fuzzy.js';
+import { openQuickOpen } from './quickopen.js';
 import { createFindBar } from './find.js';
 import { renderOutline } from './outline-view.js';
 import { extractHeadings, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
@@ -1215,6 +1217,13 @@ function openFind() {
   find.open(query);
 }
 
+function openQuickOpenPalette() {
+  const files = folder
+    ? flattenTree(folder.root)
+    : recent.files.map((path) => ({ path, rel: dirname(path), name: basename(path) }));
+  openQuickOpen({ files, recentPaths: recent.files, onPick: (path) => openPaths([path]) });
+}
+
 // Capture phase, so the shortcuts also work (and win) inside the editor.
 window.addEventListener('keydown', (e) => {
   if (isReloadKey(e)) {
@@ -1256,6 +1265,9 @@ window.addEventListener('keydown', (e) => {
     action = toggleSidebar;
   } else if (key === 'l' && e.shiftKey) {
     action = () => showSidebar('outline', { focus: true });
+  } else if (key === 'p' && plain) {
+    // Also swallows the WebView's own print dialog.
+    action = openQuickOpenPalette;
   } else if (key === 'n' && plain) {
     action = newFile;
   } else if (key === 's') {

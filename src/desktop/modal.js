@@ -16,6 +16,15 @@ export function setModalHooks(next) {
   hooks = { ...hooks, ...next };
 }
 
+// For other modal dialogs (quick open): announce one opening / closing so
+// main.js holds incoming opens and blocks app shortcuts meanwhile.
+export function modalOpened() {
+  hooks.onOpen();
+}
+export function modalClosed() {
+  hooks.onClose();
+}
+
 export function confirmSave(name) {
   const result = queue.then(() => show(name));
   queue = result.catch(() => {});
