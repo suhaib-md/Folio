@@ -18,6 +18,7 @@ import { countWords, formatCount } from './wordcount.js';
 import { extractHeadings, headingForFragment, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
 import { renderSearch, matchOrdinal } from './search.js';
 import { blobToImage, savePastedImage } from './paste-image.js';
+import { createDraftScheduler, restorePlan } from './drafts.js';
 
 const renderMarkdown = createRenderer(window);
 const $ = (id) => document.getElementById(id);
@@ -37,6 +38,7 @@ const modeSwitch = $('mode-switch');
 const tabBanner = $('tab-banner');
 const tabBannerText = $('tab-banner-text');
 const tabBannerActions = $('tab-banner-actions');
+const tabBannerRecovered = $('tab-banner-recovered');
 const sidebarEl = $('sidebar');
 const filesTree = $('files-tree');
 const filesEmpty = $('files-empty');
@@ -142,6 +144,47 @@ function onEditorChange(text) {
   // updates the model; that render is already drawing it.
   if (!rendering) render();
 }
+
+// ---- crash-recovery drafts -------------------------------------------------
+
+// A dirty tab's text is mirrored to a draft file (2 s after typing stops, at
+// most every 10 s while typing). Rather than every code path that saves,
+// reloads or closes a tab telling the scheduler, render() reconciles: any
+// dirty tab whose text changed is `changed`, any tab that was dirty and is
+// now clean or gone is `clean`.
+const draftScheduler = createDraftScheduler({
+  // getState() flushes the editor, so the write holds the latest typed text.
+  getTab: (id) => getState().tabs.find((t) => t.id === id) || null,
+  save: (draft) => backend.draftSave(draft),
+  remove: (id) => backend.draftDelete(id),
+});
+const draftTracked = new Map(); // tab id -> { text, savedText, draftId } of tabs with a (possible) draft
+
+function syncDrafts() {
+  const present = new Set();
+  for (const tab of state.tabs) {
+    present.add(tab.id);
+    const seen = draftTracked.get(tab.id);
+    if (T.isDirty(tab)) {
+      if (!seen || seen.text !== tab.text || seen.savedText !== tab.savedText) {
+        draftTracked.set(tab.id, { text: tab.text, savedText: tab.savedText, draftId: tab.draftId });
+        draftScheduler.changed(tab);
+      }
+    } else if (seen) {
+      draftTracked.delete(tab.id);
+      draftScheduler.clean(tab.id, seen.draftId);
+    }
+  }
+  for (const [id, seen] of draftTracked) {
+    if (present.has(id)) continue;
+    draftTracked.delete(id);
+    draftScheduler.clean(id, seen.draftId);
+  }
+}
+
+// Closing the window must not wait long for draft clean-up.
+const settleDrafts = (ms) =>
+  Promise.race([draftScheduler.settled(), new Promise((r) => setTimeout(r, ms))]).catch(() => {});
 
 // ---- modes ---------------------------------------------------------------
 
@@ -606,7 +649,9 @@ async function onCloseRequested() {
   if (windowClosing || closing.size || modalOpen) return false;
   windowClosing = true;
   try {
-    return await closeWindowFlow();
+    const ok = await closeWindowFlow();
+    if (ok) await settleDrafts(200);
+    return ok;
   } catch (err) {
     console.error('close flow failed:', err);
     return false;
@@ -713,6 +758,107 @@ function answerDiskChange(reload) {
   else content.focus({ preventScroll: true });
 }
 
+// ---- recovered drafts ----------------------------------------------------
+
+const RECOVERED = 'recovered'; // "Recovered unsaved changes." Keep / Discard
+const discarding = new Set(); // tab ids whose Discard is reading the disk
+
+// Keep: the banner goes, the tab stays dirty and its draft stays.
+// Discard: back to the file on disk (untitled: the tab closes), draft deleted
+// (the tab becoming clean or gone does that, see syncDrafts).
+async function answerRecovered(discard) {
+  const tab = getActiveTab();
+  if (tab?.banner?.kind !== RECOVERED) return;
+  const id = tab.id;
+  if (!discard) {
+    commit((s) => T.setBanner(s, id, null));
+  } else if (tab.path == null) {
+    closeTabNow(id);
+  } else {
+    if (discarding.has(id)) return;
+    discarding.add(id);
+    try {
+      let file;
+      try {
+        file = await backend.readFile(tab.path);
+      } catch (err) {
+        console.warn(`readFile(${tab.path}) failed:`, err);
+        if (!isNotFound(err)) {
+          showBanner(`Couldn't reload ${tab.title}: ${errorText(err)}`);
+          return;
+        }
+        // Nothing on disk to go back to.
+        if (findTab(id)?.banner?.kind === RECOVERED) closeTabNow(id);
+        return;
+      }
+      if (findTab(id)?.banner?.kind !== RECOVERED) return; // answered meanwhile
+      commit((s) => T.setBanner(T.loadFromDisk(s, id, file), id, null));
+    } finally {
+      discarding.delete(id);
+    }
+  }
+  focusEditorIfShown();
+}
+
+$('tab-banner-keep-draft').addEventListener('click', () => answerRecovered(false));
+$('tab-banner-discard-draft').addEventListener('click', () => answerRecovered(true));
+
+// Startup: every draft that is still on disk is a tab that was dirty when
+// Folio last stopped. Each opens as a dirty tab holding the draft's text.
+function restoreDraft(draft, file, diskChanged) {
+  // The file already holds exactly this text: nothing to recover.
+  if (file && file.text === draft.text) {
+    backend.draftDelete(draft.id).catch((err) => console.warn('removing draft failed:', err));
+    return;
+  }
+  let path = draft.path;
+  let title = draft.title;
+  let savedText = draft.path == null ? '' : file ? file.text : null; // null: unreadable, the tab stays dirty
+  // Two drafts for one file: the second must not be lost, nor open the
+  // same file twice.
+  if (path != null && T.findByPath(state, path)) {
+    title = `${basename(path)} (recovered)`;
+    path = null;
+    savedText = '';
+  }
+  const name = basename(draft.path ?? draft.title);
+  const text = diskChanged
+    ? `Recovered unsaved changes. ${name} also changed on disk.`
+    : 'Recovered unsaved changes.';
+  commit((s) => T.openRecovered(s, {
+    draftId: draft.id, path, title, text: draft.text, savedText,
+    eol: draft.eol, bom: !!draft.bom, banner: { kind: RECOVERED, text },
+  }));
+}
+
+async function restoreDrafts() {
+  let drafts;
+  try {
+    drafts = await backend.draftsList();
+  } catch (err) {
+    console.warn('draftsList failed:', err);
+    return;
+  }
+  if (!Array.isArray(drafts) || !drafts.length) return;
+  const files = new Map(); // path -> read result
+  const diskTexts = new Map();
+  for (const d of drafts) {
+    if (d.path == null || diskTexts.has(d.path)) continue;
+    try {
+      const file = await backend.readFile(d.path);
+      files.set(d.path, file);
+      diskTexts.set(d.path, file.text);
+    } catch (err) {
+      console.warn(`readFile(${d.path}) failed:`, err);
+      diskTexts.set(d.path, null);
+    }
+  }
+  await enqueue(restorePlan(drafts, diskTexts).map(({ draft, diskChanged }) => ({
+    path: draft.path ?? draft.title,
+    run: () => restoreDraft(draft, draft.path != null ? files.get(draft.path) : null, diskChanged),
+  })));
+}
+
 $('tab-banner-reload').addEventListener('click', () => answerDiskChange(true));
 $('tab-banner-keep').addEventListener('click', () => answerDiskChange(false));
 
@@ -726,6 +872,7 @@ function render() {
   try {
     editor.flush();
     renderNow();
+    syncDrafts();
   } finally {
     rendering = false;
   }
@@ -1260,10 +1407,12 @@ function renderTabBanner(tab) {
     return;
   }
   if (tabBannerText.textContent !== b.text) tabBannerText.textContent = b.text;
-  const info = b.kind === DISK_CHANGED;
-  tabBanner.classList.toggle('banner-info', info);
-  tabBanner.classList.toggle('banner-error', !info);
-  tabBannerActions.hidden = !info;
+  const disk = b.kind === DISK_CHANGED;
+  const recovered = b.kind === RECOVERED;
+  tabBanner.classList.toggle('banner-info', disk || recovered);
+  tabBanner.classList.toggle('banner-error', !disk && !recovered);
+  tabBannerActions.hidden = !disk;
+  tabBannerRecovered.hidden = !recovered;
   tabBanner.hidden = false;
 }
 
@@ -1588,6 +1737,8 @@ async function startup() {
     editor.flush();
     openPaths(paths, { folders: true });
   });
+  // Recovered drafts come first, then the launch paths.
+  await restoreDrafts();
   await openPaths(await backend.launchPaths(), { folders: true });
 }
 

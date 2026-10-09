@@ -16,12 +16,16 @@
 //                      that it exists (simulates an entry deleted since)
 //   listTreeCalls      number of listTree calls so far
 //   requestClose()     simulate the window close button
+//   drafts             (getter) the crash-recovery drafts, oldest first; they
+//                      live in localStorage ('folio-fake-drafts'), so a page
+//                      reload simulates a crash that keeps them
 //   opened, watched, closed, recent   what the app asked for
 // URL flags: ?failWrites=1 makes writeFile and writeImage reject with
 // "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
 // ?truncated=1 makes listTree report a truncated tree;
 // ?searchLimit=N sets the searchFolder match limit (default 1000);
+// ?noDrafts=1 turns crash-recovery drafts off (none stored, none restored);
 // ?recentFiles=/a.md,/b.md and ?recentFolders=/x seed the recent lists
 // (paths need not exist).
 
@@ -120,8 +124,31 @@ function on(event, cb) {
   return Promise.resolve(() => listeners.get(event).delete(cb));
 }
 
+const DRAFTS_KEY = 'folio-fake-drafts';
+const draftsOff = params.get('noDrafts') === '1';
+const readDrafts = () => {
+  try {
+    return JSON.parse(globalThis.localStorage.getItem(DRAFTS_KEY)) || {};
+  } catch {
+    return {};
+  }
+};
+const writeDrafts = (all) => {
+  try {
+    globalThis.localStorage.setItem(DRAFTS_KEY, JSON.stringify(all));
+  } catch {
+    // storage unavailable: drafts just don't survive
+  }
+};
+const sortedDrafts = () =>
+  Object.values(readDrafts()).sort((a, b) => a.savedAt - b.savedAt || (a.id < b.id ? -1 : 1));
+const validDraftId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
+
 const fake = {
   fs,
+  get drafts() {
+    return sortedDrafts();
+  },
   emit,
   opened: [],
   watched: null,
@@ -364,6 +391,27 @@ export async function recentRemove(path) {
     folders: recent.folders.filter((p) => norm(p) !== norm(path)),
   };
   return recentGet();
+}
+
+export async function draftsList() {
+  return draftsOff ? [] : sortedDrafts();
+}
+
+export async function draftSave(draft) {
+  if (!validDraftId(draft?.id)) throw 'invalid draft id';
+  if (draftsOff) return;
+  const all = readDrafts();
+  all[draft.id] = structuredClone(draft);
+  writeDrafts(all);
+}
+
+export async function draftDelete(id) {
+  if (!validDraftId(id)) throw 'invalid draft id';
+  const all = readDrafts();
+  if (id in all) {
+    delete all[id];
+    writeDrafts(all);
+  }
 }
 
 export async function pickFiles() {

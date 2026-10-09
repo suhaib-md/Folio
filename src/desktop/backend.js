@@ -25,6 +25,9 @@ const real = {
   recentGet: () => invoke('recent_get'),
   recentAdd: (path, kind) => invoke('recent_add', { path, kind }),
   recentRemove: (path) => invoke('recent_remove', { path }),
+  draftsList: () => invoke('drafts_list'),
+  draftSave: (draft) => invoke('draft_save', { draft }),
+  draftDelete: (id) => invoke('draft_delete', { id }),
 
   async pickFiles() {
     const picked = await open({
@@ -77,6 +80,9 @@ export const watch = (files, folder) => impl.watch(files, folder);
 export const recentGet = () => impl.recentGet();
 export const recentAdd = (path, kind) => impl.recentAdd(path, kind);
 export const recentRemove = (path) => impl.recentRemove(path);
+export const draftsList = () => impl.draftsList();
+export const draftSave = (draft) => impl.draftSave(draft);
+export const draftDelete = (id) => impl.draftDelete(id);
 export const pickFiles = () => impl.pickFiles();
 export const pickFolder = () => impl.pickFolder();
 export const pickSavePath = (defaultName) => impl.pickSavePath(defaultName);

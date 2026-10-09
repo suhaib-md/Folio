@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use base64::Engine;
+use folio_core::drafts::{self, Draft};
 use folio_core::files::{self, Eol, ReadResult};
 use folio_core::image;
 use folio_core::recent::{Kind, Recent};
@@ -18,6 +19,13 @@ const SEARCH_LIMIT: usize = 1000;
 struct RecentStore {
     path: PathBuf,
     inner: Mutex<Recent>,
+}
+
+/// The crash-recovery drafts directory; the lock keeps a save and a delete
+/// of the same draft from interleaving.
+struct DraftStore {
+    dir: PathBuf,
+    lock: Mutex<()>,
 }
 
 #[derive(Serialize)]
@@ -214,6 +222,24 @@ fn recent_remove(store: State<RecentStore>, path: String) -> Result<Recent, Stri
     Ok(next)
 }
 
+#[tauri::command(async)]
+fn drafts_list(store: State<DraftStore>) -> Vec<Draft> {
+    let _guard = store.lock.lock().unwrap_or_else(|e| e.into_inner());
+    drafts::list(&store.dir)
+}
+
+#[tauri::command(async)]
+fn draft_save(store: State<DraftStore>, draft: Draft) -> Result<(), String> {
+    let _guard = store.lock.lock().unwrap_or_else(|e| e.into_inner());
+    drafts::save(&store.dir, &draft)
+}
+
+#[tauri::command(async)]
+fn draft_delete(store: State<DraftStore>, id: String) -> Result<(), String> {
+    let _guard = store.lock.lock().unwrap_or_else(|e| e.into_inner());
+    drafts::delete(&store.dir, &id)
+}
+
 pub fn run() {
     use tauri::Emitter;
 
@@ -243,6 +269,10 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
+            app.manage(DraftStore {
+                dir: dir.join("drafts"),
+                lock: Mutex::new(()),
+            });
             let path = dir.join("recent.json");
             let recent = Recent::load(&path);
             app.manage(RecentStore {
@@ -262,7 +292,10 @@ pub fn run() {
             watch,
             recent_get,
             recent_add,
-            recent_remove
+            recent_remove,
+            drafts_list,
+            draft_save,
+            draft_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running Folio");
