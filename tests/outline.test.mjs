@@ -35,6 +35,22 @@ test('nested in blockquote and list item are found', () => {
   );
 });
 
+test('leading BOM is ignored', () => {
+  const h = extractHeadings('\uFEFF# First\n\n# Second\n');
+  assert.deepEqual(h.map((x) => [x.text, x.line]), [['First', 1], ['Second', 3]]);
+});
+
+test('nested lines are not confused by lookalike text', () => {
+  assert.equal(extractHeadings('- foo\n  bar # A\n\n  # A\n')[0].line, 4);
+  assert.equal(extractHeadings('> para\nlazy # Q\n>\n> # Q\n')[0].line, 4);
+  const h = extractHeadings('> a\r\n>\r\n> # Q\r\n\r\n- x\r\n- # R\r\n');
+  assert.deepEqual(h.map((x) => x.line), [3, 6]);
+});
+
+test('heading text decodes entities', () => {
+  assert.equal(extractHeadings('# &copy; &#169; &amp; &lt;b&gt;\n')[0].text, '\u00a9 \u00a9 & <b>');
+});
+
 test('buildOutline nests h1>h3 and siblings', () => {
   const t = buildOutline(extractHeadings('# A\n\n### B\n\n## C\n\n# D\n'));
   assert.equal(t.length, 2);

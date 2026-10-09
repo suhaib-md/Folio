@@ -8,7 +8,25 @@ import { unescape } from 'marked-gfm-heading-id';
 // (SANITIZE_NAMED_PROPS) prefixes it: the element's id is `user-content-<id>`
 // (see scrollToAnchor in main.js). Consumers look up `user-content-${id}`.
 
-const ENTITIES = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
+const NAMED = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0', copy: '\u00a9', reg: '\u00ae',
+  trade: '\u2122', hellip: '\u2026', mdash: '\u2014', ndash: '\u2013', lsquo: '\u2018', rsquo: '\u2019',
+  ldquo: '\u201c', rdquo: '\u201d', laquo: '\u00ab', raquo: '\u00bb', middot: '\u00b7', times: '\u00d7',
+  deg: '\u00b0', euro: '\u20ac', pound: '\u00a3', yen: '\u00a5', cent: '\u00a2', sect: '\u00a7',
+  para: '\u00b6', larr: '\u2190', rarr: '\u2192', uarr: '\u2191', darr: '\u2193', bull: '\u2022',
+};
+
+function decodeEntity(m, body) {
+  if (body[0] === '#') {
+    const n = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+    try {
+      return String.fromCodePoint(n);
+    } catch {
+      return m;
+    }
+  }
+  return NAMED[body.toLowerCase()] ?? m;
+}
 
 function countNewlines(s, end = s.length) {
   let n = 0;
@@ -26,7 +44,7 @@ export function extractHeadings(text) {
   // Block-level pass only: lex() would also tokenise every paragraph's inline
   // content (~3x slower on big files). Heading text is lexed on demand below.
   const lexer = new Lexer();
-  const tokens = lexer.blockTokens(text.replace(/\r\n|\r/g, '\n'), []);
+  const tokens = lexer.blockTokens(text.replace(/^\uFEFF/, '').replace(/\r\n|\r/g, '\n'), []);
 
   const add = (tok, line) => {
     const html = Parser.parseInline(lexer.inlineTokens(tok.text));
@@ -36,47 +54,32 @@ export function extractHeadings(text) {
       level: tok.depth,
       text: html
         .replace(/<[!/a-z].*?>/gi, '')
-        .replace(/&(amp|lt|gt|quot|#39);/g, (m) => ENTITIES[m])
+        .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, decodeEntity)
         .trim(),
       id: slugger.slug(raw.toLowerCase()),
       line,
     });
   };
 
-  // `base` is the 1-based line of the container's first line; children of
-  // blockquotes/list items have their prefixes stripped, so locate them
-  // inside the parent's raw text by their first line.
-  const walk = (toks, parentRaw, base, nested) => {
+  // `base` is the 1-based line of the container's first line. Every token's
+  // raw keeps its newlines (container prefixes are stripped but lines are
+  // not), so summing newlines of raw gives each child's line.
+  const walk = (toks, base) => {
     let line = base;
-    let cursor = 0;
     for (const tok of toks) {
-      let tokLine = line;
-      if (nested) {
-        const first = (tok.raw || '').split('\n')[0];
-        if (first) {
-          const at = parentRaw.indexOf(first, cursor);
-          if (at !== -1) {
-            tokLine = base + countNewlines(parentRaw, at);
-            cursor = at + first.length;
-          }
-        }
-      }
-      if (tok.type === 'heading') add(tok, tokLine);
-      else if (tok.type === 'blockquote') walk(tok.tokens || [], tok.raw, tokLine, true);
+      if (tok.type === 'heading') add(tok, line);
+      else if (tok.type === 'blockquote') walk(tok.tokens || [], line);
       else if (tok.type === 'list') {
-        let itemCursor = 0;
+        let itemLine = line;
         for (const item of tok.items) {
-          const first = item.raw.split('\n')[0];
-          const at = tok.raw.indexOf(first, itemCursor);
-          const itemLine = at === -1 ? tokLine : tokLine + countNewlines(tok.raw, at);
-          if (at !== -1) itemCursor = at + first.length;
-          walk(item.tokens || [], item.raw, itemLine, true);
+          walk(item.tokens || [], itemLine);
+          itemLine += countNewlines(item.raw);
         }
       }
-      if (!nested) line += countNewlines(tok.raw || '');
+      line += countNewlines(tok.raw || '');
     }
   };
-  walk(tokens, text, 1, false);
+  walk(tokens, 1);
   return out;
 }
 
