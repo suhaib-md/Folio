@@ -4,11 +4,12 @@ import { createRenderer } from '../render.js';
 import * as backend from './backend.js';
 import * as T from './tabs.js';
 import { createEditor } from './editor.js';
-import { confirmSave, setModalHooks } from './modal.js';
+import { confirmSave, confirmAction, setModalHooks } from './modal.js';
 import { runWindowClose } from './closing.js';
 import { decide } from './reload.js';
 import { basename, dirname, resolveRelative, isMarkdownPath } from './paths.js';
 import { renderTree } from './sidebar.js';
+import { validateName, withMdExtension, remapPath, joinPath, isInside } from './fileops.js';
 import { renderRecent } from './recent.js';
 import { flattenTree } from './fuzzy.js';
 import { openQuickOpen } from './quickopen.js';
@@ -174,8 +175,8 @@ function syncDrafts() {
     present.add(tab.id);
     const seen = draftTracked.get(tab.id);
     if (T.isDirty(tab)) {
-      if (!seen || seen.text !== tab.text || seen.savedText !== tab.savedText) {
-        draftTracked.set(tab.id, { text: tab.text, savedText: tab.savedText, draftId: tab.draftId });
+      if (!seen || seen.text !== tab.text || seen.savedText !== tab.savedText || seen.path !== tab.path) {
+        draftTracked.set(tab.id, { text: tab.text, savedText: tab.savedText, path: tab.path, draftId: tab.draftId });
         draftScheduler.changed(tab);
       }
     } else if (seen) {
@@ -546,6 +547,8 @@ async function openFolder(path, { listed = null, fromRecent = false, silent = fa
   const same = folder && T.normalizePath(folder.path) === T.normalizePath(path);
   if (!same) {
     expanded = new Set();
+    editing = null;
+    ghostDirs.clear();
     resetSearch();
   }
   folder = { path, root: result.root, truncated: !!result.truncated };
@@ -635,6 +638,285 @@ async function onFolderChanged(payload) {
   } finally {
     relisting = false;
   }
+}
+
+// ---- sidebar file operations ---------------------------------------------
+
+// New file / New folder / Rename / Delete / Show in Explorer. Targets are
+// always inside the open folder (checked here; folio-core only checks that
+// a path is absolute and local).
+let editing = null; // the inline name input, see renderTree
+let committingEdit = false;
+// Folders we created: the lister hides folders without Markdown, so they are
+// added to what the sidebar shows until a file lands in them.
+const ghostDirs = new Map(); // normalized path -> path
+// Old paths of a rename we are doing, for ~2 s: the watcher's "removed" for
+// them is not a deletion.
+const ownRemovals = new Map(); // normalized path -> expiry (ms)
+const OWN_REMOVAL_MS = 2000;
+
+function markOwnRemoval(paths) {
+  const until = Date.now() + OWN_REMOVAL_MS;
+  for (const p of paths) ownRemovals.set(T.normalizePath(p), until);
+}
+
+function isOwnRemoval(path) {
+  const now = Date.now();
+  for (const [k, until] of ownRemovals) if (until <= now) ownRemovals.delete(k);
+  return ownRemovals.has(T.normalizePath(path));
+}
+
+const sameDisk = (a, b) => T.normalizePath(a) === T.normalizePath(b);
+// Strictly inside the open folder (not the folder itself).
+const insideFolder = (path) => !!folder && !sameDisk(folder.path, path) && isInside(folder.path, path);
+const inFolderOrRoot = (path) => !!folder && isInside(folder.path, path);
+
+function fileOpError(action, name, err) {
+  console.warn(`${action} ${name} failed:`, err);
+  showBanner(`Couldn't ${action} ${name}: ${errorText(err)}`);
+}
+
+// The tree as shown: the listing plus the folders we created.
+function displayRoot() {
+  if (!ghostDirs.size) return folder.root;
+  const root = structuredClone(folder.root);
+  const byKey = new Map();
+  const index = (n) => {
+    byKey.set(T.normalizePath(n.path), n);
+    for (const c of n.children || []) index(c);
+  };
+  index(root);
+  for (const [key, path] of [...ghostDirs].sort((a, b) => a[0].length - b[0].length)) {
+    if (byKey.has(key)) {
+      ghostDirs.delete(key); // it has Markdown in it now (or came back)
+      continue;
+    }
+    const parent = byKey.get(T.normalizePath(dirname(path)));
+    if (!parent || parent.kind !== 'dir') continue;
+    const name = basename(path);
+    const node = { name, path, kind: 'dir', children: [] };
+    const kids = parent.children || (parent.children = []);
+    let i = kids.findIndex((c) => c.kind !== 'dir' || c.name.toLowerCase() > name.toLowerCase());
+    if (i < 0) i = kids.length;
+    kids.splice(i, 0, node);
+    byKey.set(key, node);
+  }
+  return root;
+}
+
+const findNode = (path) => {
+  const want = T.normalizePath(path);
+  const walk = (n) => {
+    if (T.normalizePath(n.path) === want) return n;
+    for (const c of n.children || []) {
+      const hit = walk(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return folder ? walk(displayRoot()) : null;
+};
+
+function redrawTree() {
+  treeVersion += 1;
+  render();
+}
+
+function focusRow(path) {
+  if (!path) return;
+  const want = T.normalizePath(path);
+  for (const row of filesTree.querySelectorAll('.tree-row[data-path]')) {
+    if (T.normalizePath(row.dataset.path) === want) {
+      row.focus({ preventScroll: true });
+      return;
+    }
+  }
+}
+
+function startNew(kind, parentPath) {
+  if (!folder || !inFolderOrRoot(parentPath)) return;
+  closeMenu();
+  showSidebar('files');
+  if (sidebarEl.hidden) return; // too narrow for a sidebar: nowhere to type
+  if (!sameDisk(folder.path, parentPath)) expanded.add(T.normalizePath(parentPath));
+  editing = { kind, parent: parentPath, initial: '', error: null };
+  redrawTree();
+}
+
+function startRename(node) {
+  if (!node || !insideFolder(node.path)) return;
+  closeMenu();
+  editing = {
+    kind: 'rename', path: node.path, parent: dirname(node.path), initial: node.name,
+    isDir: node.kind === 'dir', error: null,
+  };
+  redrawTree();
+}
+
+function cancelEdit() {
+  const e = editing;
+  if (!e) return;
+  editing = null;
+  redrawTree();
+  focusRow(e.kind === 'rename' ? e.path : e.parent);
+}
+
+function setEditError(error) {
+  editing = { ...editing, error };
+  redrawTree();
+}
+
+async function commitEdit(raw, { fromBlur = false } = {}) {
+  const e = editing;
+  if (!e || committingEdit) return;
+  const bad = (msg) => (fromBlur ? cancelEdit() : setEditError(msg));
+  const problem = validateName(raw);
+  if (problem) return bad(problem);
+  const name = e.kind === 'file' ? withMdExtension(raw) : raw;
+  if (e.kind === 'rename' && name === e.initial) return cancelEdit();
+  const dir = e.kind === 'rename' ? dirname(e.path) : e.parent;
+  const clash = (findNode(dir)?.children || []).some((c) =>
+    c.name.toLowerCase() === name.toLowerCase() && !(e.kind === 'rename' && sameDisk(c.path, e.path)));
+  if (clash) return bad(`“${name}” already exists here.`);
+  committingEdit = true;
+  try {
+    if (e.kind === 'rename') await doRename(e, name);
+    else await doCreate(e, name);
+  } finally {
+    committingEdit = false;
+  }
+}
+
+async function refreshFolder() {
+  if (folder) await onFolderChanged({ folder: folder.path });
+}
+
+async function doCreate(e, name) {
+  const target = joinPath(e.parent, name);
+  const isDir = e.kind === 'dir';
+  if (!inFolderOrRoot(target)) return cancelEdit();
+  try {
+    await (isDir ? backend.createDir(target) : backend.createFile(target));
+  } catch (err) {
+    editing = null;
+    redrawTree();
+    fileOpError('create', name, err);
+    return;
+  }
+  editing = null;
+  if (isDir) ghostDirs.set(T.normalizePath(target), target);
+  redrawTree();
+  await refreshFolder();
+  if (isDir) {
+    focusRow(target);
+    return;
+  }
+  await enqueue([{ path: target, run: () => openPath(target, { mode: 'edit' }) }]);
+  focusEditorIfShown();
+}
+
+async function doRename(e, name) {
+  const from = e.path;
+  const to = joinPath(dirname(from), name);
+  if (!insideFolder(from) || !inFolderOrRoot(to)) return cancelEdit();
+  // A save in flight would write the old path again after the rename.
+  const affected = getState().tabs.filter((t) => t.path != null && remapPath(t.path, from, to) !== null);
+  await Promise.all(affected.map((t) => saving.get(t.id)).filter(Boolean).map((p) => p.catch(() => {})));
+  // (A case-only rename keeps the path, as far as the watcher's keys go:
+  // nothing to ignore, and a later real deletion must still show.)
+  const oldPaths = getState().tabs
+    .filter((t) => t.path != null && remapPath(t.path, from, to) !== null)
+    .filter((t) => !sameDisk(t.path, remapPath(t.path, from, to)))
+    .map((t) => t.path);
+  markOwnRemoval(oldPaths);
+  try {
+    await backend.renamePath(from, to);
+  } catch (err) {
+    for (const p of oldPaths) ownRemovals.delete(T.normalizePath(p));
+    editing = null;
+    redrawTree();
+    fileOpError('rename', e.initial, err);
+    return;
+  }
+  editing = null;
+  // Tabs keep their text and dirty state; only path and title change.
+  commit((s) => s.tabs.reduce((acc, t) => {
+    const next = t.path != null ? remapPath(t.path, from, to) : null;
+    return next ? T.retarget(acc, t.id, next) : acc;
+  }, s));
+  // Recent entries, expanded folders and created-folder markers follow.
+  for (const [list, kind] of [[recent.files, 'file'], [recent.folders, 'folder']]) {
+    for (const p of list) {
+      const next = remapPath(p, from, to);
+      if (!next) continue;
+      trackRecent(backend.recentRemove(p), 'recentRemove');
+      trackRecent(backend.recentAdd(next, kind), 'recentAdd');
+    }
+  }
+  const remapKeys = (keys) => [...keys].map((k) => {
+    const next = remapPath(k, from, to);
+    return next ? T.normalizePath(next) : k;
+  });
+  expanded = new Set(remapKeys(expanded));
+  const ghosts = [...ghostDirs.values()].map((p) => remapPath(p, from, to) ?? p);
+  ghostDirs.clear();
+  for (const p of ghosts) ghostDirs.set(T.normalizePath(p), p);
+  redrawTree();
+  await refreshFolder();
+  focusRow(to);
+}
+
+async function deleteNode(node) {
+  if (!node || !insideFolder(node.path)) return;
+  closeMenu();
+  const isDir = node.kind === 'dir';
+  const ok = await confirmAction({
+    title: isDir
+      ? `Move ${node.name} and everything in it to the Recycle Bin?`
+      : `Move ${node.name} to the Recycle Bin?`,
+    confirmLabel: 'Delete',
+    cancelLabel: 'Cancel',
+  });
+  if (!ok) {
+    focusRow(node.path);
+    return;
+  }
+  try {
+    await backend.trashPath(node.path);
+  } catch (err) {
+    fileOpError('delete', node.name, err);
+    return;
+  }
+  for (const [k, p] of [...ghostDirs]) if (isInside(node.path, p)) ghostDirs.delete(k);
+  // Open tabs of deleted files get the watcher's "was deleted or moved." banner.
+  redrawTree();
+  await refreshFolder();
+}
+
+async function revealNode(node) {
+  try {
+    await backend.revealPath(node.path);
+  } catch (err) {
+    fileOpError('show', `${node.name} in Explorer`, err);
+  }
+}
+
+// Right-click / Shift+F10 / the row's "..." button. `node` is the root for
+// empty space; new items go inside a folder, or next to a file.
+function openFileMenu(node, x, y, anchor) {
+  if (!folder || !node) return;
+  const isRoot = sameDisk(node.path, folder.path);
+  const parent = node.kind === 'dir' ? node.path : dirname(node.path);
+  openMenu(anchor, [
+    { label: 'New file', onSelect: () => startNew('file', parent) },
+    { label: 'New folder', onSelect: () => startNew('dir', parent) },
+    ...(isRoot ? [] : [
+      { label: 'Rename', onSelect: () => startRename(node) },
+      { label: 'Delete', onSelect: () => deleteNode(node) },
+    ]),
+    'separator',
+    { label: 'Show in Explorer', onSelect: () => revealNode(node) },
+  ], { at: { x, y } });
 }
 
 // ---- recent --------------------------------------------------------------
@@ -891,6 +1173,8 @@ let changeCount = 0;
 
 async function onFileChanged({ path, kind }) {
   if (!path || !tabsAt(path).length) return;
+  // The old path of a rename we are doing: not a deletion.
+  if (kind === 'removed' && isOwnRemoval(path)) return;
   const n = T.normalizePath(path);
   const seq = ++changeCount;
   changeSeq.set(n, seq);
@@ -1263,6 +1547,7 @@ function renderSidebar(tab) {
     sidebarPanelEl(name).hidden = !on;
   }
 
+  if (editing && (sidebarTab !== 'files' || !folder)) editing = null;
   if (sidebarTab === 'files') {
     filesEmpty.hidden = !!folder;
     filesTree.hidden = !folder;
@@ -1271,12 +1556,19 @@ function renderSidebar(tab) {
       const key = `${treeVersion}|${activePath == null ? '' : T.normalizePath(activePath)}`;
       if (key !== lastSidebarKey) {
         lastSidebarKey = key;
-        renderTree(filesTree, folder.root, {
+        renderTree(filesTree, displayRoot(), {
           activePath,
           expanded,
           truncated: folder.truncated,
           onOpen: (path) => openPaths([path]),
           onToggle: toggleFolder,
+          onContextMenu: openFileMenu,
+          onRename: startRename,
+          onDelete: deleteNode,
+          onNew: startNew,
+          editing,
+          onCommit: commitEdit,
+          onCancel: cancelEdit,
         });
       }
     }

@@ -24,27 +24,13 @@ fn is_image(path: &Path) -> bool {
 /// Largest image `read_image` returns (export embeds it as base64).
 pub const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
 
-/// True for `\\server\share`, `//server/share`, `\\?\` and `\\.\` forms:
-/// paths that would make Windows open a network connection or a device.
-fn is_remote_or_device(path: &Path) -> bool {
-    let s = path.to_string_lossy();
-    s.starts_with("\\\\") || s.starts_with("//")
-}
-
 /// Reads an image file for embedding. Same extension rule as `write_image`;
 /// the path must be absolute and local (no UNC or device paths); files over
 /// 10 MB fail with "too large" even if they grow after the size check.
 pub fn read_image(path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    if is_remote_or_device(path) || !path.is_absolute() {
+    if !crate::paths::is_plain_absolute(path) {
         return Err("not a local path".to_string());
-    }
-    #[cfg(windows)]
-    if let Some(std::path::Component::Prefix(p)) = path.components().next() {
-        use std::path::Prefix;
-        if !matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) {
-            return Err("not a local path".to_string());
-        }
     }
     if !is_image(path) {
         return Err("not an image file".to_string());
@@ -131,16 +117,6 @@ mod tests {
         assert_eq!(read_image(&big).unwrap_err(), "too large");
         f.set_len(MAX_READ_BYTES).unwrap();
         assert_eq!(read_image(&big).unwrap().len() as u64, MAX_READ_BYTES);
-    }
-
-    #[test]
-    fn remote_and_device_paths_are_recognised() {
-        for p in ["\\\\server\\share\\a.png", "\\\\?\\C:\\a.png", "\\\\.\\pipe\\a.png", "//server/share/a.png"] {
-            assert!(is_remote_or_device(Path::new(p)), "{p}");
-        }
-        for p in ["C:\\a.png", "/home/a.png", "a.png"] {
-            assert!(!is_remote_or_device(Path::new(p)), "{p}");
-        }
     }
 
     #[test]

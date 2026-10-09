@@ -26,6 +26,12 @@
 //                      HTML save dialog; unset it answers /demo/<default name>
 //   exportDefaultName  the default name the last export dialog was given
 //   failWrites         (get/set) writes reject with "permission denied"
+//   dirs               Set of folders created by createDir (folders otherwise
+//                      exist only through the files in them)
+//   trashed, revealed  paths the app moved to the Recycle Bin / revealed
+// renamePath fires file-changed 'removed' for every old file path BEFORE it
+// resolves (the watcher's event racing the command's answer); trashPath fires
+// it for every removed file. Both fire folder-changed.
 // URL flags: ?failWrites=1 makes writeFile and writeImage reject with
 // "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
@@ -184,6 +190,9 @@ const fake = {
     return structuredClone(recent);
   },
   listTreeCalls: 0,
+  dirs: new Set(),
+  trashed: [],
+  revealed: [],
   change(path, text) {
     fs[path] = text;
     emit('file-changed', { path, kind: 'modified' });
@@ -246,6 +255,85 @@ export async function readFile(path) {
   const text = fs[path];
   if (isImage(text) || text.includes('\u0000')) throw 'stream did not contain valid UTF-8';
   return { text, eol: 'lf', bom: false };
+}
+
+// ---- sidebar file operations (same checks and error strings as fileops.rs) --
+
+const isLocalAbs = (p) => /^(\/(?![\\/])|[A-Za-z]:[\\/])/.test(String(p));
+const trimSlash = (p) => String(p).replace(/\/+$/, '') || '/';
+const parentOf = (p) => trimSlash(p).replace(/\/[^/]*$/, '') || '/';
+const isDir = (p) => {
+  const base = trimSlash(p);
+  return fake.dirs.has(base) || Object.keys(fs).some((k) => k.startsWith(base === '/' ? '/' : base + '/'));
+};
+const entryExists = (p) => trimSlash(p) in fs || isDir(p);
+const needLocal = (...ps) => {
+  if (!ps.every(isLocalAbs)) throw 'not a local path';
+};
+
+export async function createFile(path) {
+  needLocal(path);
+  if (entryExists(path)) throw 'already exists';
+  if (!isDir(parentOf(path))) throw 'not found';
+  if (failWrites) throw 'permission denied';
+  fs[path] = '';
+  folderChanged(path);
+}
+
+export async function createDir(path) {
+  needLocal(path);
+  if (entryExists(path)) throw 'already exists';
+  if (!isDir(parentOf(path))) throw 'not found';
+  if (failWrites) throw 'permission denied';
+  fake.dirs.add(trimSlash(path));
+  folderChanged(path);
+}
+
+export async function renamePath(from, to) {
+  needLocal(from, to);
+  from = trimSlash(from);
+  to = trimSlash(to);
+  if (!entryExists(from)) throw 'not found';
+  if (entryExists(to) && !(norm(from) === norm(to) && from !== to && parentOf(from) === parentOf(to))) throw 'already exists';
+  if (!isDir(parentOf(to))) throw 'not found';
+  if (failWrites) throw 'permission denied';
+  const prefix = from + '/';
+  const moved = [];
+  for (const k of Object.keys(fs)) {
+    if (k === from || k.startsWith(prefix)) moved.push([k, to + k.slice(from.length), fs[k]]);
+  }
+  for (const [old] of moved) delete fs[old];
+  for (const [, next, text] of moved) fs[next] = text;
+  for (const d of [...fake.dirs]) {
+    if (d === from || d.startsWith(prefix)) {
+      fake.dirs.delete(d);
+      fake.dirs.add(to + d.slice(from.length));
+    }
+  }
+  // The watcher's "removed" for the old paths (a case-only rename keeps the
+  // path as far as the key compare goes, so skip those).
+  for (const [old] of moved) if (norm(old) !== norm(to + old.slice(from.length))) emit('file-changed', { path: old, kind: 'removed' });
+  folderChanged(from);
+}
+
+export async function trashPath(path) {
+  needLocal(path);
+  path = trimSlash(path);
+  if (!entryExists(path)) throw 'not found';
+  if (failWrites) throw 'permission denied';
+  const prefix = path + '/';
+  const gone = Object.keys(fs).filter((k) => k === path || k.startsWith(prefix));
+  for (const k of gone) delete fs[k];
+  for (const d of [...fake.dirs]) if (d === path || d.startsWith(prefix)) fake.dirs.delete(d);
+  fake.trashed.push(path);
+  for (const k of gone) emit('file-changed', { path: k, kind: 'removed' });
+  folderChanged(path);
+}
+
+export async function revealPath(path) {
+  needLocal(path);
+  if (!entryExists(path)) throw 'not found';
+  fake.revealed.push(path);
 }
 
 export async function writeFile(path, text /* , eol, bom */) {

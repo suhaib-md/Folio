@@ -97,6 +97,10 @@ export function markSaved(state, id, { path, text }) {
     path != null ? { savedText: text, path, title: basename(path) } : { savedText: text });
 }
 
+// The tab's file was renamed or moved: same text and saved text, new path.
+export const retarget = (state, id, path) =>
+  update(state, id, () => ({ path, title: basename(path) }));
+
 // The file was (re)read from disk: it becomes the tab's text and saved text.
 export const loadFromDisk = (state, id, { text, eol, bom }) =>
   update(state, id, () => ({ text, savedText: text, eol, bom }));

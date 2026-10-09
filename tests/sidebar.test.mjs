@@ -118,3 +118,114 @@ test('renderRecent shows name and dimmed parent', () => {
   renderRecent(c, { files: [], folders: [] }, { onOpen() {} });
   assert.equal(c.children.length, 0);
 });
+
+// ---- file operations -------------------------------------------------------
+
+const ctx = (el, x = 10, y = 20) => el.dispatchEvent(
+  new el.ownerDocument.defaultView.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+const key = (el, k, o = {}) => el.dispatchEvent(
+  new el.ownerDocument.defaultView.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+
+test('context menu callback gets the node, the position and the row', () => {
+  const { c } = setup();
+  const got = [];
+  renderTree(c, root, opts({ onContextMenu: (node, x, y, anchor) => got.push([node.path, x, y, anchor.dataset.path]) }));
+  ctx(c.querySelector('[data-path="/demo/guide.md"]'), 11, 22);
+  assert.deepEqual(got, [['/demo/guide.md', 11, 22, '/demo/guide.md']]);
+  // empty space in the tree: the root folder
+  ctx(c.querySelector('.tree-scroll'), 1, 2);
+  assert.equal(got[1][0], '/demo');
+});
+
+test('Shift+F10, ContextMenu, F2 and Delete on a focused row', () => {
+  const { c } = setup();
+  const log = [];
+  renderTree(c, root, opts({
+    onContextMenu: (n) => log.push(['menu', n.path]),
+    onRename: (n) => log.push(['rename', n.path]),
+    onDelete: (n) => log.push(['delete', n.path]),
+  }));
+  const row = c.querySelector('[data-path="/demo/guide.md"]');
+  key(row, 'F10', { shiftKey: true });
+  key(row, 'ContextMenu');
+  key(row, 'F2');
+  key(row, 'Delete');
+  assert.deepEqual(log, [['menu', '/demo/guide.md'], ['menu', '/demo/guide.md'], ['rename', '/demo/guide.md'], ['delete', '/demo/guide.md']]);
+});
+
+test('the row more-button and header buttons call back', () => {
+  const { c } = setup();
+  const log = [];
+  renderTree(c, root, opts({
+    onContextMenu: (n, x, y, a) => log.push(['menu', n.path, a.tagName]),
+    onNew: (kind, parent) => log.push(['new', kind, parent]),
+  }));
+  c.querySelector('[data-path="/demo/guide.md"]').parentElement.querySelector('.tree-more').click();
+  c.querySelector('.sidebar-new-file').click();
+  c.querySelector('.sidebar-new-folder').click();
+  assert.deepEqual(log, [['menu', '/demo/guide.md', 'BUTTON'], ['new', 'file', '/demo'], ['new', 'dir', '/demo']]);
+});
+
+test('inline edit: new row at the top of the folder, Enter commits, Esc cancels', () => {
+  const { c } = setup();
+  const log = [];
+  const ex = new Set([normalizePath('/demo/notes')]);
+  renderTree(c, root, opts({
+    expanded: ex,
+    editing: { parent: '/demo/notes', kind: 'file', initial: '' },
+    onCommit: (name, o) => log.push(['commit', name, !!o?.fromBlur]),
+    onCancel: () => log.push(['cancel']),
+  }));
+  const input = c.querySelector('input.tree-input');
+  assert.ok(input);
+  assert.equal(input.getAttribute('aria-label'), 'New file name');
+  // first child of the notes group
+  const group = c.querySelector('[data-path="/demo/notes"]').parentElement.querySelector('ul');
+  assert.ok(group.firstElementChild.contains(input));
+  input.value = 'idea';
+  key(input, 'Enter');
+  key(input, 'Escape');
+  assert.deepEqual(log, [['commit', 'idea', false], ['cancel']]);
+});
+
+test('inline edit: blur commits as fromBlur once; an error shows under the input', () => {
+  const { c, window } = setup();
+  const log = [];
+  renderTree(c, root, opts({
+    editing: { parent: '/demo', kind: 'dir', initial: 'x', error: 'A name can’t be empty.' },
+    onCommit: (name, o) => log.push([name, !!o?.fromBlur]),
+    onCancel: () => log.push(['cancel']),
+  }));
+  const alert = c.querySelector('[role="alert"]');
+  assert.equal(alert.textContent, 'A name can’t be empty.');
+  const input = c.querySelector('input.tree-input');
+  assert.equal(input.getAttribute('aria-invalid'), 'true');
+  input.dispatchEvent(new window.FocusEvent('blur'));
+  input.dispatchEvent(new window.FocusEvent('blur'));
+  assert.deepEqual(log, [['x', true]]);
+});
+
+test('inline rename replaces the row, preselecting the name without its extension', () => {
+  const { c } = setup();
+  renderTree(c, root, opts({
+    editing: { kind: 'rename', path: '/demo/guide.md', parent: '/demo', initial: 'guide.md' },
+  }));
+  assert.equal(c.querySelector('[data-path="/demo/guide.md"]'), null);
+  const input = c.querySelector('input.tree-input');
+  assert.equal(input.value, 'guide.md');
+  assert.equal(input.getAttribute('aria-label'), 'Rename guide.md');
+  assert.equal(input.selectionStart, 0);
+  assert.equal(input.selectionEnd, 5);
+});
+
+test('a re-render while editing keeps what was typed', () => {
+  const { c } = setup();
+  const editing = { parent: '/demo', kind: 'file', initial: '' };
+  renderTree(c, root, opts({ editing }));
+  c.querySelector('input.tree-input').value = 'half-typed';
+  renderTree(c, root, opts({ editing }));
+  assert.equal(c.querySelector('input.tree-input').value, 'half-typed');
+  // a different edit starts fresh
+  renderTree(c, root, opts({ editing: { parent: '/demo', kind: 'dir', initial: '' } }));
+  assert.equal(c.querySelector('input.tree-input').value, '');
+});

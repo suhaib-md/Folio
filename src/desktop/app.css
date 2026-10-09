@@ -90,6 +90,7 @@ body { overflow: hidden; }
   color: var(--muted);
 }
 .sidebar-title {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -161,6 +162,67 @@ body { overflow: hidden; }
   transition: transform 0.1s;
 }
 .tree-row[aria-expanded="true"] .tree-twisty::before { transform: translateY(-1px) rotate(45deg); }
+
+/* Sidebar file operations */
+.sidebar-new {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sidebar-new:first-of-type { margin-left: 6px; }
+.sidebar-new:hover { background: rgb(127 127 127 / 0.18); color: var(--fg); }
+.sidebar-new:focus-visible, .tree-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tree li { position: relative; }
+.tree-more {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--subtle);
+  color: var(--muted);
+  cursor: pointer;
+}
+.tree li:hover > .tree-more, .tree-more:focus-visible, .tree li:focus-within > .tree-more { display: inline-flex; }
+.tree-more:hover { color: var(--fg); background: var(--overlay); }
+.tree-edit { cursor: default; }
+.tree-edit:hover { background: none; }
+.tree-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  user-select: text;
+}
+.tree-input:focus { outline: none; box-shadow: 0 0 0 1px var(--accent); }
+.tree-input[aria-invalid="true"] { border-color: var(--danger-fg); box-shadow: 0 0 0 1px var(--danger-fg); }
+.tree-error {
+  padding: 2px 8px 4px calc(26px + var(--depth, 0) * 14px);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--danger-fg);
+  white-space: normal;
+}
 
 /* Sidebar tabs and panels */
 .sidebar-tabs {

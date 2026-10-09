@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use base64::Engine;
 use folio_core::drafts::{self, Draft};
+use folio_core::fileops;
 use folio_core::files::{self, Eol, ReadResult};
 use folio_core::image;
 use folio_core::recent::{Kind, Recent};
@@ -114,6 +115,26 @@ fn write_image(path: String, base64: String) -> Result<(), String> {
 fn read_image(path: String) -> Result<String, String> {
     let bytes = image::read_image(Path::new(&path))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command(async)]
+fn create_file(path: String) -> Result<(), String> {
+    fileops::create_file(Path::new(&path))
+}
+
+#[tauri::command(async)]
+fn create_dir(path: String) -> Result<(), String> {
+    fileops::create_dir(Path::new(&path))
+}
+
+#[tauri::command(async)]
+fn rename_path(from: String, to: String) -> Result<(), String> {
+    fileops::rename_path(Path::new(&from), Path::new(&to))
+}
+
+#[tauri::command(async)]
+fn trash_path(path: String) -> Result<(), String> {
+    fileops::trash_path(Path::new(&path))
 }
 
 #[tauri::command(async)]
@@ -333,6 +354,10 @@ pub fn run() {
             write_file,
             write_image,
             read_image,
+            create_file,
+            create_dir,
+            rename_path,
+            trash_path,
             list_tree,
             search_folder,
             watch,

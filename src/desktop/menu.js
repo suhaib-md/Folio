@@ -9,6 +9,9 @@
 // it, Enter/Space activate, Esc closes one level, Tab or a click outside
 // closes it all. Focus returns to the anchor. Not modal: the page behind
 // stays live, but main.js closes the menu on any app shortcut (closeMenu).
+// `{ at: { x, y } }` opens it at that point (a context menu) instead of under
+// the anchor, and re-opening on the same anchor then re-opens instead of
+// toggling.
 let active = null;
 
 const enabledItems = (levelEl) =>
@@ -22,11 +25,11 @@ export function closeMenu() {
   if (active) active.close();
 }
 
-export function openMenu(anchor, items) {
+export function openMenu(anchor, items, { at = null } = {}) {
   if (active) {
     const same = active.anchor === anchor;
     active.close();
-    if (same) return null; // the anchor toggles
+    if (same && !at) return null; // the anchor toggles
   }
   const d = anchor.ownerDocument;
   const levels = []; // levels[0] is the root menu; { el, owner: item element that opened it }
@@ -46,7 +49,7 @@ export function openMenu(anchor, items) {
     const hadFocus = levels.some((l) => l.el.contains(d.activeElement)) || d.activeElement === d.body;
     for (const l of levels) l.el.remove();
     levels.length = 0;
-    anchor.setAttribute('aria-expanded', 'false');
+    if (!at) anchor.setAttribute('aria-expanded', 'false');
     if (refocus && hadFocus) anchor.focus({ preventScroll: true });
   }
 
@@ -202,21 +205,22 @@ export function openMenu(anchor, items) {
   }
 
   function onOutside(e) {
-    if (levelOf(e.target) || anchor.contains(e.target)) return;
+    if (levelOf(e.target) || (!at && anchor.contains(e.target))) return;
     close({ refocus: false });
   }
   const onFocusIn = (e) => {
-    if (!levelOf(e.target) && !anchor.contains(e.target)) close({ refocus: false });
+    if (!levelOf(e.target) && (at || !anchor.contains(e.target))) close({ refocus: false });
   };
   const onBlur = () => close({ refocus: false });
   const onResize = () => close();
 
   const root = buildLevel(items, null);
   levels.push({ el: root, owner: null });
-  anchor.setAttribute('aria-expanded', 'true');
+  if (!at) anchor.setAttribute('aria-expanded', 'true');
   const ar = anchor.getBoundingClientRect();
   const rw = root.getBoundingClientRect().width;
-  place(root, ar.right - rw, ar.bottom + 4);
+  if (at) place(root, at.x, at.y);
+  else place(root, ar.right - rw, ar.bottom + 4);
   enabledItems(root)[0]?.focus({ preventScroll: true });
   d.addEventListener('pointerdown', onOutside, true);
   d.addEventListener('focusin', onFocusIn, true);
