@@ -34,6 +34,7 @@
 // it for every removed file. Both fire folder-changed.
 // URL flags: ?slowRename=MS makes renamePath answer MS ms late (the move itself
 // happens at once, like a command whose reply is slow);
+// ?slowWrite=MS makes writeFile take MS ms (the text lands at the end);
 // ?failWrites=1 makes writeFile and writeImage reject with
 // "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
@@ -342,6 +343,8 @@ export async function revealPath(path) {
 
 export async function writeFile(path, text /* , eol, bom */) {
   if (failWrites) throw 'permission denied';
+  const slow = Number(params.get('slowWrite')) || 0;
+  if (slow) await new Promise((r) => setTimeout(r, slow));
   fs[path] = text;
 }
 

@@ -822,15 +822,14 @@ async function doRename(e, name) {
   const from = e.path;
   const to = joinPath(dirname(from), name);
   if (!insideFolder(from) || !inFolderOrRoot(to)) return cancelEdit();
-  // Saves wait at this gate until the tabs point at the new path (closed
-  // before anything else, so no save can slip in and write the old path).
+  // Saves wait at this gate until the tabs point at the new path. Close it
+  // first, synchronously, then snapshot the writes that already passed it:
+  // one in flight would write the old path again after the rename.
   let open;
   renaming.hold(new Promise((r) => { open = r; }));
-  // Saves already past the gate (before it closed) finish first: one in
-  // flight would write the old path again after the rename.
-  const inFlight = [...saving.values()];
+  const inFlight = [...writing];
   try {
-    await Promise.all(inFlight.map((p) => p.catch(() => {})));
+    await Promise.all(inFlight);
     await renameAndRetarget(e, from, to);
   } finally {
     open();
@@ -981,6 +980,9 @@ const saving = new Map(); // tab id -> in-flight save promise
 // Closed while a rename is in flight: a save must not read tab.path until the
 // tab points at the renamed file (see gate.js).
 const renaming = createGate();
+// Writes in progress, registered only after passing the gate: a rename waits
+// for these (never for a save still queued at the gate, which would deadlock).
+const writing = new Set();
 
 const findTab = (id) => getState().tabs.find((t) => t.id === id) || null;
 
@@ -1023,8 +1025,12 @@ async function saveNow(id, as) {
   // The text written is a snapshot: typing during the write keeps the tab
   // dirty, because savedText is set to exactly what reached the disk.
   const { text, eol, bom } = tab;
+  const write = backend.writeFile(path, text, eol, bom);
+  const tracked = Promise.resolve(write).then(() => {}, () => {});
+  writing.add(tracked);
+  tracked.then(() => writing.delete(tracked));
   try {
-    await backend.writeFile(path, text, eol, bom);
+    await write;
   } catch (err) {
     console.warn(`writeFile(${path}) failed:`, err);
     const banner = { kind: SAVE_ERROR, text: `Couldn't save ${basename(path)}: ${errorText(err)}` };

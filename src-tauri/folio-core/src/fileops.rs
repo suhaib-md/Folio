@@ -64,9 +64,15 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 
 /// `from` and `to` are in the same folder and differ only in letter case.
 fn is_case_only(from: &Path, to: &Path) -> bool {
-    let (Some(pf), Some(pt)) = (from.parent(), to.parent()) else { return false };
-    let (Some(nf), Some(nt)) = (from.file_name(), to.file_name()) else { return false };
-    pf == pt && nf != nt && nf.to_string_lossy().to_lowercase() == nt.to_string_lossy().to_lowercase()
+    let (Some(pf), Some(pt)) = (from.parent(), to.parent()) else {
+        return false;
+    };
+    let (Some(nf), Some(nt)) = (from.file_name(), to.file_name()) else {
+        return false;
+    };
+    pf == pt
+        && nf != nt
+        && nf.to_string_lossy().to_lowercase() == nt.to_string_lossy().to_lowercase()
 }
 
 /// Renames in two steps through a temporary name (Windows cannot always
@@ -76,8 +82,15 @@ fn rename_via_temp(from: &Path, to: &Path) -> Result<(), String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tmp = from.with_file_name(format!("{name}.folio-rename-{:x}{:x}", std::process::id(), nanos));
+    let name = from
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = from.with_file_name(format!(
+        "{name}.folio-rename-{:x}{:x}",
+        std::process::id(),
+        nanos
+    ));
     if exists(&tmp) {
         return Err("already exists".to_string());
     }
@@ -97,7 +110,12 @@ fn move_no_replace(from: &Path, to: &Path) -> Result<(), String> {
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
     const ERROR_FILE_EXISTS: i32 = 80;
     const ERROR_ALREADY_EXISTS: i32 = 183;
-    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(std::iter::once(0)).collect() };
+    let wide = |p: &Path| -> Vec<u16> {
+        p.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    };
     let (f, t) = (wide(from), wide(to));
     // SAFETY: both buffers are NUL-terminated and outlive the call.
     let ok = unsafe { MoveFileExW(f.as_ptr(), t.as_ptr(), 0) };
@@ -127,7 +145,11 @@ pub fn rename_path(from: &Path, to: &Path) -> Result<(), String> {
     }
     if exists(to) {
         if is_case_only(from, to) && same_entry(from, to) {
-            return if cfg!(windows) { rename_via_temp(from, to) } else { fs::rename(from, to).map_err(io_err) };
+            return if cfg!(windows) {
+                rename_via_temp(from, to)
+            } else {
+                fs::rename(from, to).map_err(io_err)
+            };
         }
         return Err("already exists".to_string());
     }
@@ -165,7 +187,10 @@ mod tests {
         fs::write(&p, "keep").unwrap();
         assert_eq!(create_file(&p).unwrap_err(), "already exists");
         assert_eq!(fs::read_to_string(&p).unwrap(), "keep");
-        assert_eq!(create_file(&d.path().join("no/such/a.md")).unwrap_err(), "not found");
+        assert_eq!(
+            create_file(&d.path().join("no/such/a.md")).unwrap_err(),
+            "not found"
+        );
     }
 
     #[test]
@@ -179,7 +204,12 @@ mod tests {
 
     #[test]
     fn relative_and_unc_paths_are_refused() {
-        for p in ["a.md", "x/a.md", "//server/share/a.md", "\\\\server\\share\\a.md"] {
+        for p in [
+            "a.md",
+            "x/a.md",
+            "//server/share/a.md",
+            "\\\\server\\share\\a.md",
+        ] {
             let p = Path::new(p);
             assert_eq!(create_file(p).unwrap_err(), "not a local path");
             assert_eq!(create_dir(p).unwrap_err(), "not a local path");
@@ -202,7 +232,10 @@ mod tests {
         assert_eq!(fs::read_to_string(&a).unwrap(), "other");
         assert_eq!(fs::read_to_string(&b).unwrap(), "A");
         // Missing source.
-        assert_eq!(rename_path(&d.path().join("gone.md"), &d.path().join("x.md")).unwrap_err(), "not found");
+        assert_eq!(
+            rename_path(&d.path().join("gone.md"), &d.path().join("x.md")).unwrap_err(),
+            "not found"
+        );
         // Folders too.
         let (s, t) = (d.path().join("s"), d.path().join("t"));
         fs::create_dir(&s).unwrap();

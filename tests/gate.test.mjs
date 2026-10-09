@@ -37,3 +37,39 @@ test('a save gated by a rename reads the path after the rename', async () => {
   await save;
   assert.deepEqual(written, ['/new.md']);
 });
+
+test('a rename that throws reopens the gate (try/finally pattern)', async () => {
+  const g = createGate();
+  const rename = async () => {
+    let open;
+    g.hold(new Promise((r) => { open = r; }));
+    try { throw new Error('rename failed'); } finally { open(); }
+  };
+  await assert.rejects(rename(), /rename failed/);
+  assert.equal(g.closed, false);
+  await g.wait();
+});
+
+test('queued savers wait for the gate, the rename waits only for writers past it', async () => {
+  const g = createGate();
+  const writing = new Set();
+  const order = [];
+  const save = async (name, ms) => {
+    await g.wait();
+    const w = new Promise((r) => setTimeout(r, ms)).then(() => order.push(`wrote ${name}`));
+    writing.add(w);
+    w.then(() => writing.delete(w));
+    await w;
+  };
+  const first = save('a', 20); // passes the (open) gate
+  await Promise.resolve();
+  let open;
+  g.hold(new Promise((r) => { open = r; })); // rename starts: gate closes first
+  const queued = save('b', 5); // chained behind: waits at the gate
+  const inFlight = [...writing];
+  await Promise.all(inFlight); // must not include `queued`
+  order.push('renamed');
+  open();
+  await Promise.all([first, queued]);
+  assert.deepEqual(order, ['wrote a', 'renamed', 'wrote b']);
+});
