@@ -1692,11 +1692,12 @@ function scrollToAnchor(href) {
 }
 
 doc.addEventListener('click', (e) => {
-  const link = e.target.closest('a[href]');
+  // [*|href] also finds SVG anchors (xlink:href), which a[href] misses.
+  const link = e.target.closest('a[href], a[*|href]');
   if (!link) return;
   // Never let the webview navigate away from the app.
   e.preventDefault();
-  const href = link.getAttribute('href');
+  const href = link.getAttribute('href') ?? link.getAttribute('xlink:href') ?? '';
   if (href.startsWith('#')) {
     scrollToAnchor(href);
   } else if (/^(https?|mailto):/i.test(href)) {
@@ -1711,7 +1712,7 @@ doc.addEventListener('click', (e) => {
   }
 });
 doc.addEventListener('auxclick', (e) => {
-  if (e.target.closest('a[href]')) e.preventDefault();
+  if (e.target.closest('a[href], a[*|href]')) e.preventDefault();
 });
 
 // ---- start screen, shortcuts, drag and drop ------------------------------

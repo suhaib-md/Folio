@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { createRenderer } from '../src/render.js';
 import { extractHeadings } from '../src/desktop/outline.js';
+import { budget, bestOf } from './perf-budget.mjs';
 
 const win = new JSDOM('').window;
 const plain = createRenderer(win);
@@ -71,18 +72,22 @@ test('hostile tex cannot inject markup', () => {
   assert.equal(d.querySelectorAll('img, script').length, 0);
 });
 
-test('default renderer unchanged', () => {
+test('default renderer unchanged (byte-identical to the 0.2 snapshot)', () => {
   const sample = readFileSync('tests/sample.md', 'utf8');
-  assert.equal(plain(sample), createRenderer(win, { math: false })(sample));
+  // Snapshot of createRenderer(win)(sample.md) from commit 45a2e56.
+  const snapshot = readFileSync('tests/fixtures/sample.0.2.html', 'utf8');
+  assert.equal(plain(sample), snapshot);
+  assert.equal(createRenderer(win, { math: false })(sample), snapshot);
   const dollars = 'Price $5 and $10, `$x$`, $$\nz\n$$, \\$ and $a$.\n';
   const out = plain(dollars);
   assert.doesNotMatch(out, /data-tex|math-/);
   assert.equal(createRenderer(win, {})(dollars), out);
 });
 
-test('sample.md renders the same with math on (no maths in it)', () => {
+test('sample.md renders the same with math on unless it uses maths', () => {
   const sample = readFileSync('tests/sample.md', 'utf8');
-  if (!/\$/.test(sample)) assert.equal(math(sample), plain(sample));
+  // sample.md has `$` only in prose/code that is not maths.
+  assert.equal(math(sample), plain(sample));
 });
 
 test('heading containing maths keeps outline ids in step', () => {
@@ -90,4 +95,37 @@ test('heading containing maths keeps outline ids in step', () => {
   const d = dom(math(src));
   const ids = [...d.querySelectorAll('h1,h2')].map((e) => e.id.replace(/^user-content-/, ''));
   assert.deepEqual(extractHeadings(src, { math: true }).map((h) => h.id), ids);
+});
+
+// ---- performance: linear in the input, whatever the content ------------------
+
+const gen = {
+  'no dollars': (n) => 'Some prose with *emphasis* and `code`.\n\nAnother paragraph here.\n\n'.repeat(n),
+  'currency prose': (n) => 'It costs $5 and $10 today, or $20.\n\nMore text, $3 each.\n\n'.repeat(n),
+  'one unclosed $$ line': (n) => '# T\n\n$$\n\n' + 'Some prose with *emphasis*.\n\nAnother paragraph.\n\n'.repeat(n),
+  'huge $$ paragraph': (n) => '$$a '.repeat(n * 3),
+  'many display blocks': (n) => '$$\nx\n$$\n\ntext\n\n'.repeat(n),
+};
+const N = 2500;
+for (const [name, make] of Object.entries(gen)) {
+  const small = make(N);
+  const big = make(4 * N);
+  for (const [what, run] of [
+    ['render', (t) => math(t)],
+    ['outline', (t) => extractHeadings(t, { math: true })],
+  ]) {
+    test(`math ${what} is linear: ${name}`, () => {
+      const a = bestOf(3, () => run(small));
+      const b = bestOf(3, () => run(big));
+      assert.ok(b < Math.max(8 * a, 30), `4x input took ${(b / a).toFixed(1)}x (${a.toFixed(0)} -> ${b.toFixed(0)} ms)`);
+    });
+  }
+}
+
+test('math render budget on ~1 MB inputs', () => {
+  for (const make of [gen['no dollars'], gen['currency prose'], gen['one unclosed $$ line']]) {
+    const src = make(Math.ceil(1_000_000 / make(1).length));
+    const ms = bestOf(1, () => { math(src); extractHeadings(src, { math: true }); });
+    assert.ok(ms < budget(8000), `took ${ms.toFixed(0)} ms`);
+  }
 });

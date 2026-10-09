@@ -4,6 +4,11 @@
 import createDOMPurify from 'dompurify';
 
 const purify = createDOMPurify(window);
+// Mermaid (even in strict mode) emits <a xlink:href> for `click A "url"`. A
+// diagram is a picture: its links are dropped so a click can't navigate.
+purify.addHook('uponSanitizeAttribute', (node, data) => {
+  if (node.nodeName.toLowerCase() === 'a' && /^(xlink:)?href$/i.test(data.attrName)) data.keepAttr = false;
+});
 
 let katexPromise = null;
 let mermaidPromise = null;
@@ -12,7 +17,7 @@ let cssLinked = false;
 let generation = 0;
 
 const CACHE_MAX = 200;
-const svgCache = new Map(); // theme + '\n' + source -> sanitised SVG string
+const svgCache = new Map(); // theme + '\n' + source -> { svg: sanitised SVG string, id }
 let diagramSeq = 0;
 
 function linkKatexCss() {
@@ -43,6 +48,9 @@ async function loadMermaid(theme) {
       htmlLabels: false,
       flowchart: { htmlLabels: false },
       theme: theme === 'dark' ? 'dark' : 'default',
+      // A diagram's own %%{init}%% directive can't change these.
+      secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering',
+        'maxEdges', 'htmlLabels', 'themeCSS', 'fontFamily'],
     });
     mermaidTheme = theme;
   }
@@ -79,6 +87,9 @@ function showError(pre, message) {
   pre.after(div);
 }
 
+const mathCache = new Map(); // display + errorColor + tex -> detached rendered element
+const MATH_CACHE_MAX = 500;
+
 async function renderMath(nodes, myGen) {
   linkKatexCss();
   let katex;
@@ -89,15 +100,23 @@ async function renderMath(nodes, myGen) {
     return; // the TeX source stays visible
   }
   if (myGen !== generation) return;
+  // Inline style beats CSS, so the error colour comes from the theme here.
+  const errorColor = getComputedStyle(document.documentElement).getPropertyValue('--danger-fg').trim() || '#cc0000';
   for (const el of nodes) {
     const tex = el.getAttribute('data-tex') ?? el.textContent;
+    const displayMode = el.classList.contains('math-display');
+    const key = `${displayMode ? 'D' : 'I'}${errorColor}\n${tex}`;
     try {
-      katex.render(tex, el, {
-        displayMode: el.classList.contains('math-display'),
-        throwOnError: false,
-        trust: false,
-        strict: 'ignore',
-      });
+      let done = mathCache.get(key);
+      if (done) {
+        mathCache.delete(key);
+      } else {
+        done = document.createElement('span');
+        katex.render(tex, done, { displayMode, throwOnError: false, trust: false, strict: 'ignore', errorColor });
+        if (mathCache.size >= MATH_CACHE_MAX) mathCache.delete(mathCache.keys().next().value);
+      }
+      mathCache.set(key, done);
+      el.replaceChildren(...done.cloneNode(true).childNodes);
     } catch (err) {
       console.warn('KaTeX failed:', err);
     }
@@ -106,10 +125,13 @@ async function renderMath(nodes, myGen) {
 
 const sources = new WeakMap(); // rendered .diagram wrapper -> its Mermaid source
 
-function wrap(svgString, source) {
+// Every inserted copy gets its own id prefix (the SVG's ids and its scoped
+// <style> all carry it), so a diagram that appears twice can't collide.
+function wrap({ svg, id }, source) {
+  const fresh = `folio-mermaid-${++diagramSeq}`;
   const div = document.createElement('div');
   div.className = 'diagram';
-  const node = svgNode(svgString);
+  const node = svgNode(id === fresh ? svg : svg.split(id).join(fresh));
   if (node) div.append(node);
   sources.set(div, source);
   return div;
@@ -153,8 +175,9 @@ async function renderDiagrams(items, theme, myGen) {
       if (myGen !== generation) return;
       const clean = sanitizeSvg(svg);
       if (!clean || !svgNode(clean)) throw new Error('empty diagram');
-      cacheSet(`${theme}\n${item.source}`, clean);
-      item.target.replaceWith(wrap(clean, item.source));
+      const entry = { svg: clean, id };
+      cacheSet(`${theme}\n${item.source}`, entry);
+      item.target.replaceWith(wrap(entry, item.source));
     } catch (err) {
       // Mermaid leaves a temporary error element behind in <body>.
       document.getElementById(`d${id}`)?.remove();
