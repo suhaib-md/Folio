@@ -12,7 +12,7 @@ const CSP =
 test('identity', () => {
   assert.equal(conf.identifier, 'com.suhaib.folio');
   assert.equal(conf.productName, 'Folio');
-  assert.equal(conf.version, '0.2.0');
+  assert.equal(conf.version, '0.3.0');
 });
 
 test('bundle', () => {
