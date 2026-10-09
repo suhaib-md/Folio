@@ -15,12 +15,15 @@ Open `folio.html` in Edge or Chrome, then click **Open file**, press
 Folio also ships as a Windows desktop app: double-click a `.md` file to read
 it, edit it, and keep a folder sidebar.
 
+**[⬇ Download the latest Windows installer](https://github.com/suhaib-md/Folio/releases/latest)**
+
 **Install**
 
-1. Download the `Folio-installer` artifact from the latest successful run
-   under the repo's *Actions* tab (or the installer from a GitHub Release
-   once a `v*` tag is published), and unzip it.
-2. Run `Folio_0.2.0_x64-setup.exe`. It installs per-user, no admin needed.
+1. On the [latest release](https://github.com/suhaib-md/Folio/releases/latest),
+   download `Folio_<version>_x64-setup.exe` under *Assets*. (Before the first
+   release is published, use the `Folio-installer` artifact from the latest
+   successful run under the repo's *Actions* tab, and unzip it.)
+2. Run the installer. It installs per-user, no admin needed.
 3. The installer isn't code-signed, so SmartScreen may warn: click
    **More info → Run anyway**.
 4. To make Folio the default: right-click a `.md` file → **Open with →
