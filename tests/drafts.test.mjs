@@ -199,3 +199,64 @@ test('tabs carry a draftId with the launch nonce; recovered tabs keep the draft 
   assert.equal(s.untitledCounter, 4);
   assert.equal(T.newUntitled(s).tabs[3].title, 'Untitled-5');
 });
+
+test('re-entrant changed() from inside getTab never overlaps writes; the latest text is persisted', async () => {
+  let t = 0;
+  const timers = new Map();
+  let h = 1;
+  let running = 0;
+  let maxConc = 0;
+  const persisted = [];
+  const releases = [];
+  const tab = { id: 't1', draftId: 'n-t1', path: '/a.md', title: 'a.md', text: 'v0', savedText: 'base', eol: 'lf', bom: false };
+  let reenter = true;
+  const sched = createDraftScheduler({
+    getTab: () => {
+      // like getState() -> editor.flush() -> onEditorChange -> render -> syncDrafts
+      if (reenter) { tab.text = tab.text + '+'; sched.changed(tab); }
+      return tab;
+    },
+    now: () => t,
+    setTimer: (fn, ms) => { timers.set(h, { at: t + ms, fn }); return h++; },
+    clearTimer: (x) => timers.delete(x),
+    save: (d) => new Promise((res) => {
+      running++; maxConc = Math.max(maxConc, running);
+      releases.push(() => { running--; persisted.push(d.text); res(); });
+    }),
+    remove: async () => {},
+  });
+  const run = (ms) => {
+    t += ms;
+    for (const [k, v] of [...timers]) if (v.at <= t) { timers.delete(k); v.fn(); }
+  };
+  sched.changed(tab);
+  t += 10000; // first change is 10 s old
+  for (let i = 0; i < 4; i++) { sched.changed(tab); run(2000); }
+  assert.equal(maxConc, 1);
+  while (releases.length) { releases.shift()(); await new Promise((r) => setImmediate(r)); run(2000); }
+  assert.equal(maxConc, 1);
+  assert.equal(persisted.at(-1), tab.text);
+  reenter = false;
+});
+
+import { restoreDecision } from '../src/desktop/drafts.js';
+
+test('restoreDecision: equal-to-disk deletes, second draft for an open path becomes a numbered copy, missing file stays dirty', () => {
+  const d = (over = {}) => ({ id: 'x', path: '/a.md', title: 'a.md', text: 'draft', eol: 'lf', bom: false, baseText: 'b', savedAt: 1, ...over });
+  assert.deepEqual(restoreDecision(d(), { text: 'draft' }), { action: 'delete' });
+  const normal = restoreDecision(d(), { text: 'disk' });
+  assert.deepEqual(normal, { action: 'open', path: '/a.md', title: 'a.md', savedText: 'disk', bannerText: 'Recovered unsaved changes.' });
+  const changed = restoreDecision(d(), { text: 'disk' }, { diskChanged: true });
+  assert.equal(changed.bannerText, 'Recovered unsaved changes. a.md also changed on disk.');
+  const missing = restoreDecision(d(), null);
+  assert.equal(missing.path, '/a.md');
+  assert.equal(missing.savedText, null);
+  const untitled = restoreDecision(d({ path: null, title: 'Untitled-2' }), null);
+  assert.deepEqual([untitled.path, untitled.title, untitled.savedText], [null, 'Untitled-2', '']);
+  const dup1 = restoreDecision(d(), { text: 'disk' }, { pathOpen: true, titles: ['a.md'] });
+  assert.deepEqual([dup1.path, dup1.title, dup1.savedText], [null, 'a.md (recovered)', '']);
+  const dup2 = restoreDecision(d(), { text: 'disk' }, { pathOpen: true, titles: ['a.md', 'a.md (recovered)'] });
+  assert.equal(dup2.title, 'a.md (recovered 2)');
+  const dup3 = restoreDecision(d(), { text: 'disk' }, { pathOpen: true, titles: ['a.md (recovered)', 'a.md (recovered 2)'] });
+  assert.equal(dup3.title, 'a.md (recovered 3)');
+});

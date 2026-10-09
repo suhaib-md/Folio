@@ -1,3 +1,4 @@
+pub mod atomic;
 pub mod drafts;
 pub mod files;
 pub mod image;

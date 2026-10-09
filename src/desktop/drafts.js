@@ -2,6 +2,7 @@
 // to turn the drafts found at launch into tabs. No DOM, no backend import:
 // the caller injects save/remove/timers, so the timing is testable.
 import { isDirty } from './tabs.js';
+import { basename } from './paths.js';
 
 export const DEBOUNCE_MS = 2000; // quiet time after typing before a write
 export const MAX_WAIT_MS = 10000; // longest an unsaved change waits while typing continues
@@ -36,7 +37,7 @@ export function createDraftScheduler({
   const stateOf = (id) => {
     let s = tabs.get(id);
     if (!s) {
-      s = { timer: null, firstAt: null, gen: 0, inFlight: null, again: false, draftId: null, removes: new Set() };
+      s = { timer: null, firstAt: null, gen: 0, inFlight: null, flushing: false, again: false, draftId: null, removes: new Set() };
       tabs.set(id, s);
     }
     return s;
@@ -88,7 +89,15 @@ export function createDraftScheduler({
       });
       return;
     }
-    const tab = getTab(id); // flushes the editor, which may re-arm the timer
+    // getTab flushes the editor, which can call changed() again (render ->
+    // sync). That call only records; this write takes the latest text.
+    s.flushing = true;
+    let tab;
+    try {
+      tab = getTab(id);
+    } finally {
+      s.flushing = false;
+    }
     disarm(s);
     if (!tab || !tab.draftId) return;
     s.draftId = tab.draftId;
@@ -139,6 +148,7 @@ export function createDraftScheduler({
       s.draftId = tab.draftId;
       const t = now();
       if (s.firstAt == null) s.firstAt = t;
+      if (s.flushing) return; // the running flush reads the latest text
       const waited = t - s.firstAt;
       if (waited >= maxWait) flush(tab.id);
       else arm(tab.id, s, Math.min(debounce, maxWait - waited));
@@ -184,4 +194,32 @@ export function restorePlan(drafts, diskTexts) {
       const disk = draft.path != null ? diskTexts.get(draft.path) : null;
       return { draft, diskChanged: typeof disk === 'string' && disk !== draft.baseText };
     });
+}
+
+// What startup does with one draft. `file`: the draft's file as read now
+// (null: not readable, or untitled). `ctx`: { diskChanged, pathOpen (is a tab
+// already open for this path), titles (titles of the open tabs) }.
+// -> { action: 'delete' }                      nothing to recover
+//  | { action: 'open', path, title, savedText, bannerText }
+export function restoreDecision(draft, file, { diskChanged = false, pathOpen = false, titles = [] } = {}) {
+  // The file already holds exactly this text.
+  if (draft.path != null && file && file.text === draft.text) return { action: 'delete' };
+  let path = draft.path;
+  let title = draft.title;
+  // Untitled: nothing to compare with. Unreadable file: null keeps it dirty.
+  let savedText = path == null ? '' : file ? file.text : null;
+  if (path != null && pathOpen) {
+    // A second draft for one file: keep its text as a separate untitled tab.
+    const base = `${basename(path)} (recovered`;
+    const taken = new Set(titles);
+    title = `${base})`;
+    for (let n = 2; taken.has(title); n++) title = `${base} ${n})`;
+    path = null;
+    savedText = '';
+  }
+  const name = basename(draft.path ?? draft.title);
+  const bannerText = diskChanged
+    ? `Recovered unsaved changes. ${name} also changed on disk.`
+    : 'Recovered unsaved changes.';
+  return { action: 'open', path, title, savedText, bannerText };
 }

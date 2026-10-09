@@ -18,7 +18,7 @@ import { countWords, formatCount } from './wordcount.js';
 import { extractHeadings, headingForFragment, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
 import { renderSearch, matchOrdinal } from './search.js';
 import { blobToImage, savePastedImage } from './paste-image.js';
-import { createDraftScheduler, restorePlan } from './drafts.js';
+import { createDraftScheduler, restorePlan, restoreDecision } from './drafts.js';
 
 const renderMarkdown = createRenderer(window);
 const $ = (id) => document.getElementById(id);
@@ -182,7 +182,8 @@ function syncDrafts() {
   }
 }
 
-// Closing the window must not wait long for draft clean-up.
+// Closing the window waits (briefly) for draft writes and removes, so a write
+// in flight can't bring back the draft of a tab that was just discarded.
 const settleDrafts = (ms) =>
   Promise.race([draftScheduler.settled(), new Promise((r) => setTimeout(r, ms))]).catch(() => {});
 
@@ -650,7 +651,7 @@ async function onCloseRequested() {
   windowClosing = true;
   try {
     const ok = await closeWindowFlow();
-    if (ok) await settleDrafts(200);
+    if (ok) await settleDrafts(1500);
     return ok;
   } catch (err) {
     console.error('close flow failed:', err);
@@ -806,57 +807,59 @@ $('tab-banner-discard-draft').addEventListener('click', () => answerRecovered(tr
 // Startup: every draft that is still on disk is a tab that was dirty when
 // Folio last stopped. Each opens as a dirty tab holding the draft's text.
 function restoreDraft(draft, file, diskChanged) {
-  // The file already holds exactly this text: nothing to recover.
-  if (file && file.text === draft.text) {
+  const d = restoreDecision(draft, file, {
+    diskChanged,
+    pathOpen: draft.path != null && !!T.findByPath(state, draft.path),
+    titles: state.tabs.map((t) => t.title),
+  });
+  if (d.action === 'delete') {
     backend.draftDelete(draft.id).catch((err) => console.warn('removing draft failed:', err));
     return;
   }
-  let path = draft.path;
-  let title = draft.title;
-  let savedText = draft.path == null ? '' : file ? file.text : null; // null: unreadable, the tab stays dirty
-  // Two drafts for one file: the second must not be lost, nor open the
-  // same file twice.
-  if (path != null && T.findByPath(state, path)) {
-    title = `${basename(path)} (recovered)`;
-    path = null;
-    savedText = '';
-  }
-  const name = basename(draft.path ?? draft.title);
-  const text = diskChanged
-    ? `Recovered unsaved changes. ${name} also changed on disk.`
-    : 'Recovered unsaved changes.';
   commit((s) => T.openRecovered(s, {
-    draftId: draft.id, path, title, text: draft.text, savedText,
-    eol: draft.eol, bom: !!draft.bom, banner: { kind: RECOVERED, text },
+    draftId: draft.id, path: d.path, title: d.title, text: draft.text, savedText: d.savedText,
+    eol: draft.eol, bom: !!draft.bom, banner: { kind: RECOVERED, text: d.bannerText },
   }));
 }
 
-async function restoreDrafts() {
-  let drafts;
-  try {
-    drafts = await backend.draftsList();
-  } catch (err) {
-    console.warn('draftsList failed:', err);
-    return;
-  }
-  if (!Array.isArray(drafts) || !drafts.length) return;
-  const files = new Map(); // path -> read result
-  const diskTexts = new Map();
-  for (const d of drafts) {
-    if (d.path == null || diskTexts.has(d.path)) continue;
-    try {
-      const file = await backend.readFile(d.path);
-      files.set(d.path, file);
-      diskTexts.set(d.path, file.text);
-    } catch (err) {
-      console.warn(`readFile(${d.path}) failed:`, err);
-      diskTexts.set(d.path, null);
-    }
-  }
-  await enqueue(restorePlan(drafts, diskTexts).map(({ draft, diskChanged }) => ({
-    path: draft.path ?? draft.title,
-    run: () => restoreDraft(draft, draft.path != null ? files.get(draft.path) : null, diskChanged),
-  })));
+// One job on the open queue, queued before anything else can be, so
+// open-paths events and launch paths land after the drafts. It starts once
+// the other backend listeners are in place.
+function restoreDrafts(listenersReady) {
+  return enqueue([{
+    path: 'recovered drafts',
+    run: async () => {
+      await listenersReady;
+      let drafts;
+      try {
+        drafts = await backend.draftsList();
+      } catch (err) {
+        console.warn('draftsList failed:', err);
+        return;
+      }
+      if (!Array.isArray(drafts) || !drafts.length) return;
+      const files = new Map(); // path -> read result
+      const diskTexts = new Map();
+      for (const d of drafts) {
+        if (d.path == null || diskTexts.has(d.path)) continue;
+        try {
+          const file = await backend.readFile(d.path);
+          files.set(d.path, file);
+          diskTexts.set(d.path, file.text);
+        } catch (err) {
+          console.warn(`readFile(${d.path}) failed:`, err);
+          diskTexts.set(d.path, null);
+        }
+      }
+      for (const { draft, diskChanged } of restorePlan(drafts, diskTexts)) {
+        try {
+          restoreDraft(draft, draft.path != null ? files.get(draft.path) : null, diskChanged);
+        } catch (err) {
+          console.error(`restoring draft ${draft.id} failed:`, err);
+        }
+      }
+    },
+  }]);
 }
 
 $('tab-banner-reload').addEventListener('click', () => answerDiskChange(true));
@@ -1727,18 +1730,25 @@ async function startup() {
     editor.flush();
     openPaths(paths, { folders: true });
   });
-  await backend.onFileChanged((change) => {
-    onFileChanged(change).catch((err) => console.error('file change failed:', err));
-  });
-  await backend.onFolderChanged((change) => {
-    onFolderChanged(change).catch((err) => console.error('folder change failed:', err));
-  });
-  await backend.onDragDrop((paths) => {
-    editor.flush();
-    openPaths(paths, { folders: true });
-  });
-  // Recovered drafts come first, then the launch paths.
-  await restoreDrafts();
+  // Recovered drafts open before anything else: queue them now (ahead of any
+  // open-paths event), let them start once the listeners below exist.
+  let listenersReady;
+  const restoring = restoreDrafts(new Promise((r) => { listenersReady = r; }));
+  try {
+    await backend.onFileChanged((change) => {
+      onFileChanged(change).catch((err) => console.error('file change failed:', err));
+    });
+    await backend.onFolderChanged((change) => {
+      onFolderChanged(change).catch((err) => console.error('folder change failed:', err));
+    });
+    await backend.onDragDrop((paths) => {
+      editor.flush();
+      openPaths(paths, { folders: true });
+    });
+  } finally {
+    listenersReady(); // even if a subscription failed: never leave the queue waiting
+  }
+  await restoring;
   await openPaths(await backend.launchPaths(), { folders: true });
 }
 

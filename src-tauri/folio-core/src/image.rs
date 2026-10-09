@@ -1,7 +1,7 @@
 //! Writing a pasted image next to its document.
 
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::Path;
 
 /// Same list as the asset scope in tauri.conf.json (case-insensitive).
@@ -23,12 +23,11 @@ fn is_image(path: &Path) -> bool {
 
 /// Writes `bytes` to `path` without ever replacing an existing file.
 ///
-/// The parent folder is created. The data goes to `<name>.folio-tmp` (created
-/// exclusively) and is renamed into place, so a half-written image never has
-/// the final name. Residual race: `rename` replaces on Unix and Windows, so a
-/// file created by someone else between the final existence check and the
-/// rename would be overwritten; the window is a few microseconds and the
-/// target name is timestamped, so it is accepted.
+/// The parent folder is created. The data goes through `atomic_write` (exclusive
+/// temp file, fsync, rename), so a half-written image never has the final
+/// name. Residual race: a file created by someone else between the final
+/// existence check and the rename would be overwritten; the window is a few
+/// microseconds and the target name is timestamped, so it is accepted.
 pub fn write_image(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if !is_image(path) {
         return Err("not an image file".to_string());
@@ -40,27 +39,7 @@ pub fn write_image(path: &Path, bytes: &[u8]) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
 
-    let mut tmp_name = path
-        .file_name()
-        .ok_or_else(|| "invalid file path".to_string())?
-        .to_os_string();
-    tmp_name.push(".folio-tmp");
-    let tmp = path.with_file_name(tmp_name);
-
-    let result = (|| {
-        let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        drop(f);
-        if path.exists() {
-            return Err(io::Error::from(io::ErrorKind::AlreadyExists));
-        }
-        fs::rename(&tmp, path)
-    })();
-    if let Err(e) = result {
-        let _ = fs::remove_file(&tmp);
-        return Err(io_err(e));
-    }
+    crate::atomic::atomic_write(path, bytes, true).map_err(io_err)?;
     Ok(())
 }
 

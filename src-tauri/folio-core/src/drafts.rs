@@ -50,6 +50,12 @@ pub fn list(dir: &Path) -> Vec<Draft> {
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let path = e.path();
+            // Left by a write that a crash cut short (callers hold the
+            // drafts lock, so no write is running).
+            if path.extension().and_then(|x| x.to_str()) == Some("folio-tmp") {
+                let _ = fs::remove_file(&path);
+                return None;
+            }
             if path.extension().and_then(|x| x.to_str()) != Some("json") {
                 return None;
             }
@@ -68,12 +74,7 @@ pub fn save(dir: &Path, draft: &Draft) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_vec(draft).map_err(|e| e.to_string())?;
     let target = file_of(dir, &draft.id);
-    let tmp = dir.join(format!("{}.json.tmp", draft.id));
-    let result = fs::write(&tmp, &json).and_then(|_| fs::rename(&tmp, &target));
-    if let Err(e) = result {
-        let _ = fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
+    crate::atomic::atomic_write(&target, &json, false).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -118,7 +119,7 @@ mod tests {
         save(&dir, &a).unwrap(); // overwrite
         assert_eq!(list(&dir), vec![b, a]); // oldest first
         let leftovers = fs::read_dir(&dir).unwrap().filter(|e| {
-            e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".tmp")
+            e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".folio-tmp")
         });
         assert_eq!(leftovers.count(), 0);
     }
@@ -138,6 +139,7 @@ mod tests {
         fs::write(d.path().join("bad.json"), "{not json").unwrap();
         fs::write(d.path().join("empty.json"), "").unwrap();
         fs::write(d.path().join("note.txt"), "x").unwrap();
+        fs::write(d.path().join("half.json.folio-tmp"), "{\"id\":").unwrap();
         // valid JSON whose id doesn't match its file name
         let mut other = draft("other", 2);
         other.id = "liar".to_string();
@@ -145,6 +147,7 @@ mod tests {
         let got = list(d.path());
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].id, "good");
+        assert!(!d.path().join("half.json.folio-tmp").exists(), "stale temp removed");
         assert!(list(&d.path().join("missing")).is_empty());
     }
 
