@@ -19,6 +19,9 @@ import { extractHeadings, headingForFragment, buildOutline, currentIndex, headin
 import { renderSearch, matchOrdinal } from './search.js';
 import { blobToImage, savePastedImage } from './paste-image.js';
 import { createDraftScheduler, restorePlan, restoreDecision } from './drafts.js';
+import { createSettings } from './settings.js';
+import { createAutosave } from './autosave.js';
+import { openMenu, closeMenu } from './menu.js';
 
 const renderMarkdown = createRenderer(window);
 const $ = (id) => document.getElementById(id);
@@ -187,6 +190,54 @@ function syncDrafts() {
 const settleDrafts = (ms) =>
   Promise.race([draftScheduler.settled(), new Promise((r) => setTimeout(r, ms))]).catch(() => {});
 
+// ---- settings and autosave -------------------------------------------------
+
+const settings = createSettings(backend);
+
+// Autosave: render() reconciles which dirty tabs have a 1 s timer (see
+// autosave.js). It saves through the normal save(); a failed save (banner
+// already shown) pauses the tab until a manual save succeeds.
+const autosave = createAutosave({
+  getTab: (id) => getState().tabs.find((t) => t.id === id) || null,
+  blocked: () => modalOpen,
+  save: async (id) => {
+    const ok = await save(id);
+    if (!ok && findTab(id)) commit((s) => T.setAutosavePaused(s, id, true));
+  },
+});
+
+function syncAutosave() {
+  autosave.sync(state.tabs, settings.get().autosave);
+}
+settings.onChange(syncAutosave);
+
+let appVersion = '';
+async function showAbout() {
+  try {
+    appVersion = appVersion || (await backend.appInfo()).version;
+  } catch (err) {
+    console.warn('app_info failed:', err);
+  }
+  showBanner(appVersion ? `Folio ${appVersion}` : 'Folio', 'info');
+}
+
+// Later tasks append their items here.
+function moreMenuItems() {
+  return [
+    {
+      label: 'Autosave',
+      checked: settings.get().autosave,
+      onSelect: () => settings.update({ autosave: !settings.get().autosave }),
+    },
+    'separator',
+    { label: 'About Folio', onSelect: showAbout },
+  ];
+}
+
+$('more-btn').addEventListener('click', () => {
+  openMenu($('more-btn'), moreMenuItems());
+});
+
 // ---- modes ---------------------------------------------------------------
 
 // The view a tab gets on screen: Split falls back to Edit in narrow windows
@@ -238,8 +289,11 @@ roomy.addEventListener('change', () => render());
 
 // ---- app banner ----------------------------------------------------------
 
-function showBanner(message) {
+function showBanner(message, kind = 'error') {
   bannerText.textContent = message;
+  banner.classList.toggle('banner-error', kind !== 'info');
+  banner.classList.toggle('banner-info', kind === 'info');
+  banner.setAttribute('role', kind === 'info' ? 'status' : 'alert');
   banner.hidden = false;
 }
 
@@ -580,7 +634,7 @@ async function saveNow(id, as) {
     const saved = next.tabs.find((t) => t.id === id);
     // What we just wrote is now the file: save errors and disk banners are moot.
     if (saved?.banner) next = T.setBanner(next, id, null);
-    return next;
+    return T.setAutosavePaused(next, id, false);
   });
   if (saveAs) {
     // Another clean tab showing the file we just wrote over is now stale.
@@ -651,7 +705,11 @@ async function onCloseRequested() {
   windowClosing = true;
   try {
     const ok = await closeWindowFlow();
-    if (ok) await settleDrafts(1500);
+    if (ok) {
+      autosave.cancelAll();
+      await settleDrafts(1500);
+      await Promise.race([settings.flush(), new Promise((r) => setTimeout(r, 1500))]);
+    }
     return ok;
   } catch (err) {
     console.error('close flow failed:', err);
@@ -876,6 +934,7 @@ function render() {
     editor.flush();
     renderNow();
     syncDrafts();
+    syncAutosave();
   } finally {
     rendering = false;
   }
@@ -1698,6 +1757,7 @@ window.addEventListener('keydown', (e) => {
   e.preventDefault();
   e.stopPropagation();
   if (modalOpen) return; // the modal is answered first
+  closeMenu(); // any app shortcut closes an open ⋯ menu
   // Every app shortcut sees the latest typed text. (Not done for plain typing
   // keys: that would turn a big document into a string on every keystroke.)
   editor.flush();
@@ -1720,6 +1780,7 @@ window.addEventListener('drop', (e) => e.preventDefault());
 // ---- startup -------------------------------------------------------------
 
 async function startup() {
+  await settings.load();
   render();
   trackRecent(backend.recentGet(), 'recentGet');
   await backend.onCloseRequested(onCloseRequested);

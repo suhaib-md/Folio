@@ -20,6 +20,8 @@
 //                      live in localStorage ('folio-fake-drafts'), so a page
 //                      reload simulates a crash that keeps them
 //   opened, watched, closed, recent   what the app asked for
+//   settings            what settings.json would hold (localStorage
+//                      'folio-fake-settings'), or null
 // URL flags: ?failWrites=1 makes writeFile and writeImage reject with
 // "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
@@ -144,8 +146,20 @@ const sortedDrafts = () =>
   Object.values(readDrafts()).sort((a, b) => a.savedAt - b.savedAt || (a.id < b.id ? -1 : 1));
 const validDraftId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
 
+const SETTINGS_KEY = 'folio-fake-settings';
+const readSettings = () => {
+  try {
+    return JSON.parse(globalThis.localStorage.getItem(SETTINGS_KEY));
+  } catch {
+    return null;
+  }
+};
+
 const fake = {
   fs,
+  get settings() {
+    return readSettings();
+  },
   get drafts() {
     return sortedDrafts();
   },
@@ -187,6 +201,22 @@ export const isDesktop = false;
 export async function launchPaths() {
   const open = params.get('open');
   return open ? open.split(',').filter(Boolean) : [];
+}
+
+export async function settingsGet() {
+  return readSettings() || {};
+}
+
+export async function settingsSet(settings) {
+  try {
+    globalThis.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // storage unavailable: settings just don't survive a reload
+  }
+}
+
+export async function appInfo() {
+  return { version: '0.3.0-dev', updaterConfigured: false };
 }
 
 export async function readFile(path) {

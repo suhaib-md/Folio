@@ -8,6 +8,7 @@ use folio_core::files::{self, Eol, ReadResult};
 use folio_core::image;
 use folio_core::recent::{Kind, Recent};
 use folio_core::search::{self, FileMatches};
+use folio_core::settings::{self, Settings};
 use folio_core::tree::{self, TreeNode};
 use folio_core::watch::{ChangeKind, WatchEvent, Watcher};
 use serde::Serialize;
@@ -19,6 +20,11 @@ const SEARCH_LIMIT: usize = 1000;
 struct RecentStore {
     path: PathBuf,
     inner: Mutex<Recent>,
+}
+
+struct SettingsStore {
+    path: PathBuf,
+    inner: Mutex<Settings>,
 }
 
 /// The crash-recovery drafts directory; the lock keeps a save and a delete
@@ -223,6 +229,34 @@ fn recent_remove(store: State<RecentStore>, path: String) -> Result<Recent, Stri
 }
 
 #[tauri::command(async)]
+fn settings_get(store: State<SettingsStore>) -> Settings {
+    store.inner.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+#[tauri::command(async)]
+fn settings_set(store: State<SettingsStore>, settings: Settings) -> Result<(), String> {
+    let mut guard = store.inner.lock().unwrap_or_else(|e| e.into_inner());
+    settings::save(&store.path, &settings)?;
+    *guard = settings;
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppInfo {
+    version: String,
+    updater_configured: bool,
+}
+
+#[tauri::command]
+fn app_info(app: tauri::AppHandle) -> AppInfo {
+    AppInfo {
+        version: app.package_info().version.to_string(),
+        updater_configured: false,
+    }
+}
+
+#[tauri::command(async)]
 fn drafts_list(store: State<DraftStore>) -> Vec<Draft> {
     let _guard = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     drafts::list(&store.dir)
@@ -279,6 +313,11 @@ pub fn run() {
                 path,
                 inner: Mutex::new(recent),
             });
+            let settings_path = dir.join("settings.json");
+            app.manage(SettingsStore {
+                inner: Mutex::new(settings::load(&settings_path)),
+                path: settings_path,
+            });
             app.manage(WatchState(Mutex::new(start_watcher(app.handle().clone()))));
             Ok(())
         })
@@ -295,7 +334,10 @@ pub fn run() {
             recent_remove,
             drafts_list,
             draft_save,
-            draft_delete
+            draft_delete,
+            settings_get,
+            settings_set,
+            app_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running Folio");

@@ -79,6 +79,9 @@ export const MODES = ['read', 'edit', 'split'];
 export const setMode = (state, id, mode) =>
   (MODES.includes(mode) ? update(state, id, () => ({ mode })) : state);
 export const setBanner = (state, id, banner) => update(state, id, () => ({ banner }));
+// Set by a failed autosave, cleared by the next successful save.
+export const setAutosavePaused = (state, id, paused) =>
+  update(state, id, () => ({ autosavePaused: !!paused }));
 export const clearSaved = (state, id) => update(state, id, () => ({ savedText: null }));
 
 export function markSaved(state, id, { path, text }) {

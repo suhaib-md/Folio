@@ -28,6 +28,9 @@ const real = {
   draftsList: () => invoke('drafts_list'),
   draftSave: (draft) => invoke('draft_save', { draft }),
   draftDelete: (id) => invoke('draft_delete', { id }),
+  settingsGet: () => invoke('settings_get'),
+  settingsSet: (settings) => invoke('settings_set', { settings }),
+  appInfo: () => invoke('app_info'),
 
   async pickFiles() {
     const picked = await open({
@@ -83,6 +86,9 @@ export const recentRemove = (path) => impl.recentRemove(path);
 export const draftsList = () => impl.draftsList();
 export const draftSave = (draft) => impl.draftSave(draft);
 export const draftDelete = (id) => impl.draftDelete(id);
+export const settingsGet = () => impl.settingsGet();
+export const settingsSet = (settings) => impl.settingsSet(settings);
+export const appInfo = () => impl.appInfo();
 export const pickFiles = () => impl.pickFiles();
 export const pickFolder = () => impl.pickFolder();
 export const pickSavePath = (defaultName) => impl.pickSavePath(defaultName);
