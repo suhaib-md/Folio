@@ -100,10 +100,7 @@ test('touching ranges stay well formed', () => {
   const stars = (t) => (t.match(/\*/g) || []).length;
   const d = '**aa**bb**';
   const r = toggleWrap(d, [{ from: 2, to: 4 }, { from: 4, to: 10 }], '**');
-  const [t, sel] = apply(d, r);
-  assert.equal(stars(t) % 2, 0, t);
-  assert.ok(r.ranges.every((x) => x.to > x.from), JSON.stringify(r.ranges));
-  assert.equal(sel[0], 'aa');
+  assert.deepEqual(apply(d, r), ['****aa**bb', ['aa', 'bb']]);
   const d2 = '*aa*';
   const r2 = toggleWrap(d2, [{ from: 1, to: 3 }, { from: 3, to: 4 }], '*');
   const [t2, sel2] = apply(d2, r2);
