@@ -14,6 +14,7 @@ import { flattenTree } from './fuzzy.js';
 import { openQuickOpen } from './quickopen.js';
 import { createFindBar } from './find.js';
 import { renderOutline } from './outline-view.js';
+import { countWords, formatCount } from './wordcount.js';
 import { extractHeadings, headingForFragment, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
 import { renderSearch, matchOrdinal } from './search.js';
 import { blobToImage, savePastedImage } from './paste-image.js';
@@ -23,6 +24,7 @@ const $ = (id) => document.getElementById(id);
 const tabbar = $('tabbar');
 const toolbar = $('toolbar');
 const filename = $('filename');
+const wordcountEl = $('wordcount');
 const banner = $('app-banner');
 const bannerText = $('app-banner-text');
 const content = $('content');
@@ -560,6 +562,7 @@ function closeTabNow(id) {
   beforeSplit.delete(id);
   renderCost.delete(id);
   outlineCache.delete(id);
+  wordCache.delete(id);
   collapsedByTab.delete(id);
 }
 
@@ -758,6 +761,8 @@ function renderNow() {
       btn.setAttribute('aria-pressed', String(btn.dataset.mode === tab.mode));
     }
   }
+
+  syncWordCount(tab);
 
   // True when the editor already shows this text (it came from typing).
   const typed = !!tab && editorFor.id === tab.id && editorFor.text === tab.text;
@@ -1009,6 +1014,58 @@ function scrollToFragment(tab, frag) {
     editor.revealLine(heading.line);
     if (view === 'edit' && !modalOpen) editor.focus();
   }
+}
+
+// ---- word count ----------------------------------------------------------
+
+const wordCache = new Map(); // tab id -> { text, label } for that text
+let wordTimer = null;
+let wordShownFor = null; // tab id the label currently describes
+
+function setWordLabel(label) {
+  wordcountEl.textContent = label;
+  wordcountEl.hidden = !label;
+}
+
+// A tab switch (or any change that is not typing) shows the count at once,
+// from the cache when the text is unchanged; typing waits for the preview
+// delay, so no keystroke pays for a recount.
+function syncWordCount(tab) {
+  if (!tab) {
+    clearTimeout(wordTimer);
+    wordTimer = null;
+    wordShownFor = null;
+    setWordLabel('');
+    return;
+  }
+  const cached = wordCache.get(tab.id);
+  if (cached && cached.text === tab.text) {
+    clearTimeout(wordTimer);
+    wordTimer = null;
+    wordShownFor = tab.id;
+    setWordLabel(cached.label);
+  } else if (wordShownFor === tab.id && cached) {
+    clearTimeout(wordTimer);
+    wordTimer = setTimeout(() => {
+      wordTimer = null;
+      editor.flush(); // a batched edit may still be pending (big documents)
+      clearTimeout(wordTimer); // ... and its render re-armed this timer
+      wordTimer = null;
+      const now = activeTab();
+      if (now && now.id === tab.id) syncWordCountNow(now);
+    }, previewDelay(tab));
+  } else {
+    clearTimeout(wordTimer);
+    wordTimer = null;
+    syncWordCountNow(tab);
+  }
+}
+
+function syncWordCountNow(tab) {
+  const label = formatCount(countWords(tab.text));
+  wordCache.set(tab.id, { text: tab.text, label });
+  wordShownFor = tab.id;
+  setWordLabel(label);
 }
 
 // ---- outline -------------------------------------------------------------

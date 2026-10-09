@@ -480,6 +480,18 @@ main.content {
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:disabled:hover { border-color: var(--border); }
 
+/* Word count and reading time */
+.wordcount {
+  flex: none;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.wordcount[hidden] { display: none; }
+@media (max-width: 599px) {
+  .wordcount { display: none; }
+}
+
 /* Read / Edit / Split switch */
 .mode-switch {
   flex: none;
