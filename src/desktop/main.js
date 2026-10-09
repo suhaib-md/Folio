@@ -861,6 +861,7 @@ function syncSession() {
   if (!sessionFrozen) {
     let session = captureSession(state, currentFolder());
     if (skippedSession) {
+      // Any change of tab set or folder (a launch file included) drops the skipped entries.
       if (sessionShape(session) === skippedShape) session = mergeSkipped(session, skippedSession);
       else skippedSession = null;
     }

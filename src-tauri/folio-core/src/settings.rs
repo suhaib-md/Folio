@@ -7,13 +7,14 @@ use std::path::Path;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Sidebar {
-    pub visible: bool,
+    /// None: never chosen (auto: shown while a folder is open). Serialised as null.
+    pub visible: Option<bool>,
     pub tab: String,
 }
 
 impl Default for Sidebar {
     fn default() -> Self {
-        Sidebar { visible: true, tab: "files".into() }
+        Sidebar { visible: None, tab: "files".into() }
     }
 }
 
@@ -89,6 +90,20 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_visible_is_tri_state() {
+        let parse = |j: &str| serde_json::from_str::<Settings>(j).unwrap().sidebar.visible;
+        assert_eq!(parse(r#"{"sidebar": {}}"#), None);
+        assert_eq!(parse(r#"{}"#), None);
+        assert_eq!(parse(r#"{"sidebar": {"visible": null}}"#), None);
+        assert_eq!(parse(r#"{"sidebar": {"visible": true}}"#), Some(true));
+        assert_eq!(parse(r#"{"sidebar": {"visible": false}}"#), Some(false));
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(json.contains(r#""visible":null"#), "{json}");
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, Settings::default());
+    }
+
+    #[test]
     fn defaults_when_corrupt() {
         let p = tmp("corrupt");
         std::fs::write(&p, "{ not json").unwrap();
@@ -107,7 +122,7 @@ mod tests {
         assert!(s.autosave);
         assert_eq!(s.zoom, 100);
         assert_eq!(s.theme, "system");
-        assert!(s.sidebar.visible);
+        assert_eq!(s.sidebar.visible, None);
         assert_eq!(s.sidebar.tab, "outline");
         assert_eq!(s.session.active.as_deref(), Some("/a.md"));
         assert!(s.session.tabs.is_empty());

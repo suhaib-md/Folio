@@ -217,7 +217,15 @@ export async function launchPaths() {
 }
 
 export async function settingsGet() {
-  return readSettings() || {};
+  // No stored settings: exactly folio-core's Settings::default() as serialised
+  // (sidebar.visible is null: never chosen), so the fake can't hide a mismatch.
+  return readSettings() || {
+    zoom: 100,
+    theme: 'system',
+    autosave: false,
+    sidebar: { visible: null, tab: 'files' },
+    session: { tabs: [], active: null, folder: null },
+  };
 }
 
 export async function settingsSet(settings) {
