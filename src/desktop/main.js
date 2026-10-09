@@ -1222,10 +1222,26 @@ window.addEventListener('keydown', (e) => {
     e.stopPropagation();
     return;
   }
-  if (e.key === 'Escape' && find.isOpen() && !modalOpen) {
-    // Not stopped: an editor search panel may close with the same key.
-    find.close();
-    return;
+  if (find.isOpen() && !modalOpen) {
+    if (e.key === 'F3' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      // Also keeps the WebView's own find from opening.
+      e.preventDefault();
+      e.stopPropagation();
+      find.step(e.shiftKey ? -1 : 1);
+      return;
+    }
+    if (e.key === 'Escape') {
+      // Not from an open editor search panel (that closes first), nor from
+      // elsewhere outside the bar and the document pane.
+      const a = document.activeElement;
+      const here = !a || a === document.body || $('find').contains(a) || content.contains(a);
+      if (here || !editorEl.querySelector('.cm-panel')) {
+        e.preventDefault();
+        e.stopPropagation();
+        find.close();
+        return;
+      }
+    }
   }
   if (!e.ctrlKey || e.metaKey) return;
   const key = e.key.toLowerCase();

@@ -7,20 +7,23 @@ export const FIND_LIMIT = 10000;
 // the lowered copy are valid in the original): characters whose lower case is
 // not exactly one UTF-16 unit are kept as they are.
 function fold(s) {
+  const l = s.toLowerCase();
+  if (l.length === s.length) return l;
   let out = '';
   for (let i = 0; i < s.length; i++) {
-    const l = s[i].toLowerCase();
-    out += l.length === 1 ? l : s[i];
+    const c = s[i].toLowerCase();
+    out += c.length === 1 ? c : s[i];
   }
   return out;
 }
 
 // All non-overlapping occurrences of `query` in `text`, in order, at most
 // `limit`. Empty query -> [].
-export function findInText(text, query, matchCase, limit = FIND_LIMIT) {
+// `foldedText` (optional): fold(text) computed earlier, to skip redoing it.
+export function findInText(text, query, matchCase, limit = FIND_LIMIT, foldedText) {
   const out = [];
   if (!query) return out;
-  const hay = matchCase ? text : fold(text);
+  const hay = matchCase ? text : foldedText ?? fold(text);
   const needle = matchCase ? query : fold(query);
   let from = 0;
   while (out.length < limit) {
@@ -67,6 +70,7 @@ export function createFindBar(root, getDocEl) {
 
   const canHighlight = () => !!(win.CSS && win.CSS.highlights && win.Highlight);
 
+  // All matches in `folio-find`; the current one is painted over them.
   function setHighlights() {
     if (!canHighlight()) return;
     const h = win.CSS.highlights;
@@ -75,9 +79,20 @@ export function createFindBar(root, getDocEl) {
       h.delete('folio-find-current');
       return;
     }
-    h.set('folio-find', new win.Highlight(...ranges.filter((_, i) => i !== current)));
-    if (current >= 0) h.set('folio-find-current', new win.Highlight(ranges[current]));
-    else h.delete('folio-find-current');
+    h.set('folio-find', new win.Highlight(...ranges));
+    setCurrentHighlight();
+  }
+
+  function setCurrentHighlight() {
+    if (!canHighlight()) return;
+    const h = win.CSS.highlights;
+    if (current < 0) {
+      h.delete('folio-find-current');
+      return;
+    }
+    const cur = new win.Highlight(ranges[current]);
+    cur.priority = 1;
+    h.set('folio-find-current', cur);
   }
 
   function clearHighlights() {
@@ -103,8 +118,10 @@ export function createFindBar(root, getDocEl) {
       const parent = e === docEl ? null : e.parentElement;
       const pi = parent ? infoOf(parent) : null;
       const hidden = display === 'none' || !!(pi && pi.hidden);
+      const ws = win.getComputedStyle(e).whiteSpace;
+      const collapse = !/^(pre|break-spaces)/.test(ws) && ws !== 'pre-line';
       const inline = display.startsWith('inline') || display === 'contents' || display === '';
-      i = { hidden, block: inline && pi ? pi.block : e };
+      i = { hidden, collapse, block: inline && pi ? pi.block : e };
       info.set(e, i);
       return i;
     };
@@ -119,9 +136,18 @@ export function createFindBar(root, getDocEl) {
       if (lastBlock && i.block !== lastBlock) text += '\n';
       lastBlock = i.block;
       segs.push({ node: n, start: text.length });
-      text += n.nodeValue;
+      // Soft line breaks and tabs show as one space: same length, same offsets.
+      text += i.collapse ? n.nodeValue.replace(/[\n\r\t]/g, ' ') : n.nodeValue;
     }
-    return { text, segs };
+    return { text, segs, folded: null };
+  }
+
+  // The searchable text of the current render; rebuilt only after a refresh
+  // or open, not on every keystroke in the query box.
+  let cache = null;
+  function snapshot(docEl) {
+    if (!cache || cache.docEl !== docEl) cache = { docEl, ...collect(docEl) };
+    return cache;
   }
 
   // Position `offset` of the joined text -> { node, offset }; `end` picks the
@@ -151,8 +177,10 @@ export function createFindBar(root, getDocEl) {
     const docEl = getDocEl();
     const query = input.value;
     if (docEl && query) {
-      const { text, segs } = collect(docEl);
-      const found = findInText(text, query, matchCase, FIND_LIMIT);
+      const snap = snapshot(docEl);
+      const { text, segs } = snap;
+      if (!matchCase && snap.folded == null) snap.folded = fold(text);
+      const found = findInText(text, query, matchCase, FIND_LIMIT, matchCase ? undefined : snap.folded);
       capped = found.length >= FIND_LIMIT;
       for (const m of found) {
         const a = locate(segs, m.start, false);
@@ -164,7 +192,7 @@ export function createFindBar(root, getDocEl) {
         starts.push(m.start);
       }
       if (ranges.length) {
-        if (wanted != null) current = Math.max(0, Math.min(ranges.length - 1, wanted));
+        if (wanted != null) current = wanted >= 0 && wanted < ranges.length ? wanted : 0;
         else {
           const at = starts.findIndex((s) => s >= prevStart);
           current = at < 0 ? 0 : at;
@@ -199,7 +227,7 @@ export function createFindBar(root, getDocEl) {
     if (timer) search(null, false);
     if (!ranges.length) return;
     current = (current + dir + ranges.length) % ranges.length;
-    setHighlights();
+    setCurrentHighlight();
     updateCount();
     reveal();
   }
@@ -236,6 +264,7 @@ export function createFindBar(root, getDocEl) {
     if (query !== undefined) input.value = query;
     input.focus();
     input.select();
+    cache = null;
     search(nth ?? null, true);
   }
 
@@ -249,14 +278,16 @@ export function createFindBar(root, getDocEl) {
     ranges = [];
     starts = [];
     current = -1;
+    cache = null;
     clearHighlights();
     if (hadFocus) scroller()?.focus({ preventScroll: true });
   }
 
   // The document was re-rendered: find the matches again (no scrolling).
   function refresh() {
+    cache = null;
     if (open) search(null, false);
   }
 
-  return { open: show, close, refresh, isOpen: () => open };
+  return { open: show, close, refresh, step, isOpen: () => open };
 }

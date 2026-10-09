@@ -34,7 +34,7 @@ test('counts matches across inline elements and not across blocks', () => {
   assert.equal(count.textContent, '1 of 1');
   bar.open('foo');
   assert.equal(count.textContent, '1 of 2');
-  bar.open('foo\nfoo');
+  bar.open('foofoo');
   assert.equal(count.textContent, 'No results');
   bar.open('x foo');
   assert.equal(count.textContent, 'No results');
@@ -66,4 +66,68 @@ test('refresh re-runs against new content', () => {
   d.getElementById('doc').innerHTML = '<p>x x</p>';
   bar.refresh();
   assert.equal(count.textContent, '1 of 2');
+});
+
+test('soft line breaks match as spaces; pre keeps newlines', () => {
+  const { bar, count } = setup('<p>find bar\nabove</p><pre>a\nb</pre>');
+  bar.open('bar above');
+  assert.equal(count.textContent, '1 of 1');
+  bar.open('a b');
+  assert.equal(count.textContent, 'No results');
+});
+
+test('findInText on ~5 MB is fast', () => {
+  const text = 'Lorem ipsum dolor sit amet, the quick brown fox. '.repeat(108000);
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const t = performance.now();
+    findInText(text, 'the', false);
+    best = Math.min(best, performance.now() - t);
+  }
+  assert.ok(best < 200, `took ${best} ms`);
+});
+
+test('nth out of range falls back to the first match', () => {
+  const { bar, count } = setup('<p>a a a</p>');
+  bar.open('a', 99);
+  assert.equal(count.textContent, '1 of 3');
+  bar.open('a', -1);
+  assert.equal(count.textContent, '1 of 3');
+});
+
+test('keys on the bar: Enter, Shift+Enter, Esc', () => {
+  const { dom, bar, input, count } = setup('<p>a a a</p>');
+  const key = (init) => input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+  bar.open('a');
+  key({ key: 'Enter' });
+  assert.equal(count.textContent, '2 of 3');
+  key({ key: 'Enter', shiftKey: true });
+  key({ key: 'Enter', shiftKey: true });
+  assert.equal(count.textContent, '3 of 3');
+  key({ key: 'Escape' });
+  assert.equal(bar.isOpen(), false);
+});
+
+test('Aa toggle matches case', () => {
+  const { d, bar, count } = setup('<p>Foo foo</p>');
+  bar.open('foo');
+  assert.equal(count.textContent, '1 of 2');
+  const aa = d.querySelector('.find-case');
+  aa.click();
+  assert.equal(aa.getAttribute('aria-pressed'), 'true');
+  assert.equal(count.textContent, '1 of 1');
+});
+
+test('shows 10000+ when capped', () => {
+  const { bar, count } = setup('<p>' + 'a'.repeat(10005) + '</p>');
+  bar.open('a');
+  assert.equal(count.textContent, '1 of 10000+');
+});
+
+test('position is kept after refresh()', () => {
+  const { bar, d, count } = setup('<p>x x x</p>');
+  bar.open('x', 1);
+  d.getElementById('doc').innerHTML = '<p>x x x x</p>';
+  bar.refresh();
+  assert.equal(count.textContent, '2 of 4');
 });
