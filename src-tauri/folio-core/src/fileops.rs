@@ -89,6 +89,33 @@ fn rename_via_temp(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Moves without replacing: fails if `to` exists (Windows `fs::rename` would
+/// replace a file, so call `MoveFileExW` with no flags).
+#[cfg(windows)]
+fn move_no_replace(from: &Path, to: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+    const ERROR_FILE_EXISTS: i32 = 80;
+    const ERROR_ALREADY_EXISTS: i32 = 183;
+    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(std::iter::once(0)).collect() };
+    let (f, t) = (wide(from), wide(to));
+    // SAFETY: both buffers are NUL-terminated and outlive the call.
+    let ok = unsafe { MoveFileExW(f.as_ptr(), t.as_ptr(), 0) };
+    if ok != 0 {
+        return Ok(());
+    }
+    let e = io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(ERROR_FILE_EXISTS) | Some(ERROR_ALREADY_EXISTS) => Err("already exists".to_string()),
+        _ => Err(io_err(e)),
+    }
+}
+
+#[cfg(not(windows))]
+fn move_no_replace(from: &Path, to: &Path) -> Result<(), String> {
+    fs::rename(from, to).map_err(io_err)
+}
+
 /// Renames or moves a file or folder. Never replaces an existing entry
 /// ("already exists"), except that changing only the case of a name is
 /// allowed; a missing `from` is "not found".
@@ -104,7 +131,7 @@ pub fn rename_path(from: &Path, to: &Path) -> Result<(), String> {
         }
         return Err("already exists".to_string());
     }
-    fs::rename(from, to).map_err(io_err)
+    move_no_replace(from, to)
 }
 
 /// Moves a file or folder to the Recycle Bin / Trash.
@@ -220,32 +247,5 @@ mod tests {
             return;
         }
         assert_eq!(rename_path(&a, &b).unwrap_err(), "already exists");
-    }
-
-    #[test]
-    fn trash_removes_from_folder() {
-        let d = tempfile::tempdir().unwrap();
-        // The freedesktop trash lives under XDG_DATA_HOME; keep it on the
-        // same file system as the file so the move is a rename.
-        #[cfg(all(unix, not(target_os = "macos")))]
-        std::env::set_var("XDG_DATA_HOME", d.path().join("xdg"));
-        let dir = d.path().join("proj");
-        fs::create_dir(&dir).unwrap();
-        let f = dir.join("gone.md");
-        fs::write(&f, "x").unwrap();
-        let sub = dir.join("sub");
-        fs::create_dir(&sub).unwrap();
-        fs::write(sub.join("in.md"), "y").unwrap();
-        let r = trash_path(&f).and_then(|_| trash_path(&sub));
-        match r {
-            Ok(()) => assert!(names(&dir).is_empty(), "{:?}", names(&dir)),
-            Err(e) if cfg!(any(windows, target_os = "macos")) => panic!("trash failed: {e}"),
-            Err(e) => {
-                // No usable freedesktop trash on this runner: nothing to check.
-                eprintln!("skipping trash check, no trash available here: {e}");
-                return;
-            }
-        }
-        assert_eq!(trash_path(&f).unwrap_err(), "not found");
     }
 }

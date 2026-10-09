@@ -117,6 +117,10 @@ fn read_image(path: String) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+// The four file operations below trust the frontend for containment: they
+// accept any absolute local path (folio-core refuses relative and UNC/device
+// paths). That the target lies inside the open folder is enforced by the JS
+// guard in main.js (`insideFolder` / `inFolderOrRoot`).
 #[tauri::command(async)]
 fn create_file(path: String) -> Result<(), String> {
     fileops::create_file(Path::new(&path))

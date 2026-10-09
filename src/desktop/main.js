@@ -9,7 +9,8 @@ import { runWindowClose } from './closing.js';
 import { decide } from './reload.js';
 import { basename, dirname, resolveRelative, isMarkdownPath } from './paths.js';
 import { renderTree } from './sidebar.js';
-import { validateName, withMdExtension, remapPath, joinPath, isInside } from './fileops.js';
+import { createGate } from './gate.js';
+import { validateName, withMdExtension, keepExtension, remapPath, joinPath, isInside } from './fileops.js';
 import { renderRecent } from './recent.js';
 import { flattenTree } from './fuzzy.js';
 import { openQuickOpen } from './quickopen.js';
@@ -772,7 +773,9 @@ async function commitEdit(raw, { fromBlur = false } = {}) {
   const bad = (msg) => (fromBlur ? cancelEdit() : setEditError(msg));
   const problem = validateName(raw);
   if (problem) return bad(problem);
-  const name = e.kind === 'file' ? withMdExtension(raw) : raw;
+  // New files get .md; a renamed file keeps its extension if none is typed.
+  const name = e.kind === 'file' ? withMdExtension(raw)
+    : e.kind === 'rename' && !e.isDir ? keepExtension(raw, e.initial) : raw;
   if (e.kind === 'rename' && name === e.initial) return cancelEdit();
   const dir = e.kind === 'rename' ? dirname(e.path) : e.parent;
   const clash = (findNode(dir)?.children || []).some((c) =>
@@ -819,15 +822,26 @@ async function doRename(e, name) {
   const from = e.path;
   const to = joinPath(dirname(from), name);
   if (!insideFolder(from) || !inFolderOrRoot(to)) return cancelEdit();
-  // A save in flight would write the old path again after the rename.
-  const affected = getState().tabs.filter((t) => t.path != null && remapPath(t.path, from, to) !== null);
-  await Promise.all(affected.map((t) => saving.get(t.id)).filter(Boolean).map((p) => p.catch(() => {})));
-  // (A case-only rename keeps the path, as far as the watcher's keys go:
-  // nothing to ignore, and a later real deletion must still show.)
-  const oldPaths = getState().tabs
-    .filter((t) => t.path != null && remapPath(t.path, from, to) !== null)
-    .filter((t) => !sameDisk(t.path, remapPath(t.path, from, to)))
-    .map((t) => t.path);
+  // Saves wait at this gate until the tabs point at the new path (closed
+  // before anything else, so no save can slip in and write the old path).
+  let open;
+  renaming.hold(new Promise((r) => { open = r; }));
+  // Saves already past the gate (before it closed) finish first: one in
+  // flight would write the old path again after the rename.
+  const inFlight = [...saving.values()];
+  try {
+    await Promise.all(inFlight.map((p) => p.catch(() => {})));
+    await renameAndRetarget(e, from, to);
+  } finally {
+    open();
+  }
+}
+
+async function renameAndRetarget(e, from, to) {
+  const moved = (t) => t.path != null && remapPath(t.path, from, to) !== null;
+  // The watcher will report the old paths as removed (also a case-only
+  // rename on a case-sensitive disk): not deletions.
+  const oldPaths = getState().tabs.filter(moved).map((t) => t.path);
   markOwnRemoval(oldPaths);
   try {
     await backend.renamePath(from, to);
@@ -844,6 +858,13 @@ async function doRename(e, name) {
     const next = t.path != null ? remapPath(t.path, from, to) : null;
     return next ? T.retarget(acc, t.id, next) : acc;
   }, s));
+  // A new path is not "ours to ignore": a quick rename back, or a real
+  // deletion, must still show. (Same key as an old path = case-only: keep.)
+  const oldKeys = new Set(oldPaths.map((p) => T.normalizePath(p)));
+  for (const t of getState().tabs.filter((t) => t.path != null)) {
+    const k = T.normalizePath(t.path);
+    if (!oldKeys.has(k)) ownRemovals.delete(k);
+  }
   // Recent entries, expanded folders and created-folder markers follow.
   for (const [list, kind] of [[recent.files, 'file'], [recent.folders, 'folder']]) {
     for (const p of list) {
@@ -957,6 +978,9 @@ setModalHooks({ onOpen: () => setModalOpen(true), onClose: () => setModalOpen(fa
 const SAVE_ERROR = 'save-error';
 const PASTE_ERROR = 'paste-error';
 const saving = new Map(); // tab id -> in-flight save promise
+// Closed while a rename is in flight: a save must not read tab.path until the
+// tab points at the renamed file (see gate.js).
+const renaming = createGate();
 
 const findTab = (id) => getState().tabs.find((t) => t.id === id) || null;
 
@@ -978,6 +1002,7 @@ function save(id, { as = false } = {}) {
 }
 
 async function saveNow(id, as) {
+  await renaming.wait();
   let tab = findTab(id);
   if (!tab) return false;
   let path = tab.path;

@@ -131,10 +131,12 @@ mod tests {
     #[test]
     fn round_trip() {
         let p = tmp("rt");
-        let mut s = Settings::default();
-        s.zoom = 120;
-        s.theme = "dark".into();
-        s.autosave = true;
+        let mut s = Settings {
+            zoom: 120,
+            theme: "dark".into(),
+            autosave: true,
+            ..Settings::default()
+        };
         s.session.tabs.push(SessionTab { path: "/a.md".into(), mode: "edit".into() });
         s.session.folder = Some("/x".into());
         save(&p, &s).unwrap();

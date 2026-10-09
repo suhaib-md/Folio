@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateName, withMdExtension, remapPath, joinPath, isInside } from '../src/desktop/fileops.js';
+import { validateName, withMdExtension, keepExtension, remapPath, joinPath, isInside } from '../src/desktop/fileops.js';
 
 test('validateName accepts ordinary names', () => {
   for (const n of ['notes', 'notes.md', 'my file.md', 'a.b.c', '.hidden', 'CONSOLE', 'com10', 'lpt0', 'été.md']) {
@@ -52,4 +52,12 @@ test('joinPath keeps the separator style and isInside is case/separator blind', 
   assert.equal(isInside('C:\\Docs', 'c:/docs/x/a.md'), true);
   assert.equal(isInside('/demo', '/demo'), true);
   assert.equal(isInside('/demo', '/demo2/a.md'), false);
+});
+
+test('keepExtension keeps the original extension when the new name has none', () => {
+  assert.equal(keepExtension('manual', 'guide.md'), 'manual.md');
+  assert.equal(keepExtension('manual.txt', 'guide.md'), 'manual.txt');
+  assert.equal(keepExtension('manual', 'README'), 'manual');
+  assert.equal(keepExtension('v1.2', 'guide.md'), 'v1.2');
+  assert.equal(keepExtension('manual', 'a.b.markdown'), 'manual.markdown');
 });

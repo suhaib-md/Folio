@@ -58,3 +58,13 @@ export function joinPath(dir, name) {
 export function isInside(root, path) {
   return remapPath(path, root, '/x') !== null;
 }
+
+// Renaming a FILE: a typed name without an extension keeps the original's
+// ("guide.md" renamed to "manual" becomes "manual.md"). Folders are unchanged.
+export function keepExtension(name, original) {
+  const n = String(name);
+  if (n.lastIndexOf('.') > 0) return n;
+  const o = String(original);
+  const i = o.lastIndexOf('.');
+  return i > 0 ? n + o.slice(i) : n;
+}

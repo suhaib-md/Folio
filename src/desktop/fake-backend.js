@@ -32,7 +32,9 @@
 // renamePath fires file-changed 'removed' for every old file path BEFORE it
 // resolves (the watcher's event racing the command's answer); trashPath fires
 // it for every removed file. Both fire folder-changed.
-// URL flags: ?failWrites=1 makes writeFile and writeImage reject with
+// URL flags: ?slowRename=MS makes renamePath answer MS ms late (the move itself
+// happens at once, like a command whose reply is slow);
+// ?failWrites=1 makes writeFile and writeImage reject with
 // "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
 // ?truncated=1 makes listTree report a truncated tree;
@@ -310,10 +312,12 @@ export async function renamePath(from, to) {
       fake.dirs.add(to + d.slice(from.length));
     }
   }
-  // The watcher's "removed" for the old paths (a case-only rename keeps the
-  // path as far as the key compare goes, so skip those).
-  for (const [old] of moved) if (norm(old) !== norm(to + old.slice(from.length))) emit('file-changed', { path: old, kind: 'removed' });
+  // The watcher's "removed" for the old paths (also for a case-only rename,
+  // as on a case-sensitive disk).
+  for (const [old] of moved) emit('file-changed', { path: old, kind: 'removed' });
   folderChanged(from);
+  const slow = Number(params.get('slowRename')) || 0;
+  if (slow) await new Promise((r) => setTimeout(r, slow));
 }
 
 export async function trashPath(path) {

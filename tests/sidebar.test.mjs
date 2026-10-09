@@ -229,3 +229,20 @@ test('a re-render while editing keeps what was typed', () => {
   renderTree(c, root, opts({ editing: { parent: '/demo', kind: 'dir', initial: '' } }));
   assert.equal(c.querySelector('input.tree-input').value, '');
 });
+
+test('Delete and F2 typed inside the inline input do not delete or rename', () => {
+  const { c } = setup();
+  const log = [];
+  renderTree(c, root, opts({
+    editing: { kind: 'rename', path: '/demo/guide.md', parent: '/demo', initial: 'guide.md' },
+    onRename: () => log.push('rename'),
+    onDelete: () => log.push('delete'),
+    onContextMenu: () => log.push('menu'),
+  }));
+  const input = c.querySelector('input.tree-input');
+  key(input, 'Delete');
+  key(input, 'F2');
+  key(input, 'F10', { shiftKey: true });
+  key(input, 'ContextMenu');
+  assert.deepEqual(log, []);
+});
