@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { budget, bestOf } from './perf-budget.mjs';
 import { fuzzyMatch, rankFiles, createRanker, flattenTree, displayParts } from '../src/desktop/fuzzy.js';
 
 const f = (rel, path = '/r/' + rel) => ({ path, rel, name: rel.split(/[\\/]/).pop() });
@@ -147,26 +148,22 @@ test('5000 files rank for "note" in under 15 ms', () => {
     return { path: `C:\\Users\\Muhammed suhaib\\Documents\\${rel}`, rel, name };
   });
   const recent = files.slice(0, 20).map((x) => x.path);
-  rankFiles('note', files, recent); // warm-up
-  const rank = createRanker(files, recent);
-  rank('note');
-  let best = Infinity;
-  for (let i = 0; i < 3; i++) {
-    const t = performance.now();
-    rankFiles('note', files, recent);
-    best = Math.min(best, performance.now() - t);
-  }
+  const best = bestOf(3, () => rankFiles('note', files, recent));
   // Also the typing path: a ranker prepared once, then queries extending.
+  // Only the final keystroke is timed, so the closure measures it itself and
+  // bestOf's own timing (which includes ranker setup) is ignored.
+  let calls = 0;
   let typing = Infinity;
-  for (let i = 0; i < 3; i++) {
+  bestOf(3, () => {
     const r = createRanker(files, recent);
     r('n');
     r('no');
     r('not');
     const t = performance.now();
     r('note');
-    typing = Math.min(typing, performance.now() - t);
-  }
-  assert.ok(typing < 15, `incremental keystroke took ${typing.toFixed(1)} ms`);
-  assert.ok(best < 15, `rankFiles took ${best.toFixed(1)} ms`);
+    const ms = performance.now() - t;
+    if (calls++ > 0) typing = Math.min(typing, ms); // call 0 is the warm-up
+  });
+  assert.ok(typing < budget(15), `incremental keystroke took ${typing.toFixed(1)} ms, budget ${budget(15)} ms`);
+  assert.ok(best < budget(15), `rankFiles took ${best.toFixed(1)} ms, budget ${budget(15)} ms`);
 });

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { budget, bestOf } from './perf-budget.mjs';
 import { findInText, createFindBar } from '../src/desktop/find.js';
 
 test('case-insensitive by default', () => {
@@ -88,13 +89,18 @@ test('soft line breaks match as spaces; pre keeps newlines', () => {
 
 test('findInText on ~5 MB is fast', () => {
   const text = 'Lorem ipsum dolor sit amet, the quick brown fox. '.repeat(108000);
-  let best = Infinity;
-  for (let i = 0; i < 3; i++) {
-    const t = performance.now();
-    findInText(text, 'the', false);
-    best = Math.min(best, performance.now() - t);
-  }
-  assert.ok(best < 200, `took ${best} ms`);
+  const best = bestOf(3, () => findInText(text, 'the', false));
+  assert.ok(best < budget(200), `took ${best.toFixed(1)} ms, budget ${budget(200)} ms`);
+});
+
+test('findInText time grows linearly with text size (4x input < 8x time)', () => {
+  const unit = 'Lorem ipsum dolor sit amet, the quick brown fox. ';
+  const small = unit.repeat(27000);
+  const big = unit.repeat(108000);
+  const a = bestOf(3, () => findInText(small, 'the', false));
+  const b = bestOf(3, () => findInText(big, 'the', false));
+  // Linear is ~4x; quadratic would be ~16x. Independent of machine speed.
+  assert.ok(b < a * 8, `4x input took ${(b / a).toFixed(1)}x the time (${a.toFixed(2)} -> ${b.toFixed(2)} ms)`);
 });
 
 test('nth out of range falls back to the first match', () => {

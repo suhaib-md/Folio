@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { createRenderer } from '../src/render.js';
+import { budget, bestOf } from './perf-budget.mjs';
 import { headingForFragment, extractHeadings, buildOutline, currentIndex, headingIndexForLine } from '../src/desktop/outline.js';
 
 test('atx and setext with levels and lines', () => {
@@ -80,16 +81,22 @@ test('headingIndexForLine', () => {
 test('5 MB doc extracts under 1500 ms', () => {
   const chunk = '# Heading\n\nSome paragraph text with *emphasis* and `code`.\n\n- item\n- item\n\n';
   const src = chunk.repeat(Math.ceil((5 * 1024 * 1024) / chunk.length));
-  // Best of three: the suite runs test files in parallel, so one run can be starved.
-  let ms = Infinity;
+  // Best of three after a warm-up: the suite runs test files in parallel, so one run can be starved.
   let h;
-  for (let i = 0; i < 3; i++) {
-    const t = performance.now();
-    h = extractHeadings(src);
-    ms = Math.min(ms, performance.now() - t);
-  }
+  const ms = bestOf(3, () => { h = extractHeadings(src); });
   assert.ok(h.length > 1000);
-  assert.ok(ms < 1500, `took ${ms} ms`);
+  assert.ok(ms < budget(1500), `took ${ms.toFixed(0)} ms, budget ${budget(1500)} ms`);
+});
+
+test('extract time grows linearly with document size (4x input < 8x time)', () => {
+  const chunk = '# Heading\n\nSome paragraph text with *emphasis* and `code`.\n\n- item\n- item\n\n';
+  const make = (mb) => chunk.repeat(Math.ceil((mb * 1024 * 1024) / chunk.length));
+  const small = make(1.25);
+  const big = make(5);
+  const a = bestOf(3, () => extractHeadings(small));
+  const b = bestOf(3, () => extractHeadings(big));
+  // Linear is ~4x; quadratic would be ~16x. Independent of machine speed.
+  assert.ok(b < a * 8, `4x input took ${(b / a).toFixed(1)}x the time (${a.toFixed(0)} -> ${b.toFixed(0)} ms)`);
 });
 
 test('headingForFragment: plain, prefixed, percent-encoded, unknown', () => {
