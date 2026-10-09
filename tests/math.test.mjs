@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { createRenderer } from '../src/render.js';
+import { Marked } from 'marked';
+import { createMathExtension } from '../src/math-extension.js';
 import { extractHeadings } from '../src/desktop/outline.js';
 import { budget, bestOf } from './perf-budget.mjs';
 
@@ -128,4 +130,63 @@ test('math render budget on ~1 MB inputs', () => {
     const ms = bestOf(1, () => { math(src); extractHeadings(src, { math: true }); });
     assert.ok(ms < budget(8000), `took ${ms.toFixed(0)} ms`);
   }
+});
+
+// ---- the start-position memo must never change the result -------------------
+
+test('a later paragraph ending like an earlier one keeps its maths', () => {
+  const tail = ' — see the appendix of the reference manual for the complete derivation.';
+  const src = `The energy is $E=mc^2$ in the rest frame, and padding text here${tail}\n\nThe momentum is $p=mv$${tail}\n`;
+  const d = dom(math(src));
+  assert.deepEqual([...d.querySelectorAll('.math-inline')].map((e) => e.getAttribute('data-tex')), ['E=mc^2', 'p=mv']);
+});
+
+// Reference: unmemoised `start`, written independently of the implementation.
+function reference(ext) {
+  const [block, inline] = ext.extensions;
+  block.start = (src) => {
+    const re = /\n {0,3}\$\$([^\n]*)/g;
+    for (let m = re.exec(src); m; m = re.exec(src)) {
+      if (m[1].trim() === '' || /\$\$[ \t]*$/.test(m[1])) return m.index + 1;
+    }
+    return undefined;
+  };
+  inline.start = (src) => (src.indexOf('$') < 0 ? undefined : src.indexOf('$'));
+  return ext;
+}
+
+test('memoised start equals the unmemoised reference on random documents', () => {
+  let seed = 12345;
+  const rnd = (n) => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed % n;
+  };
+  const tails = [
+    ' — see the appendix of the reference manual for the complete derivation.',
+    ' and then the long shared ending of the sentence goes on for a good while yet.',
+  ];
+  const bits = ['$x$', '$a+b$', '$$y$$', '$5', '$10 ', 'plain words ', '`$c$`', '\\$', '*em $z$ em*', '$ x$', '$x $', '[l $q$](u)', '$$'];
+  const docs = [];
+  for (let i = 0; i < 300; i++) {
+    const parts = [];
+    const nb = 2 + rnd(6);
+    for (let b = 0; b < nb; b++) {
+      const k = rnd(8);
+      if (k === 0) parts.push('$$\n' + bits[rnd(4)] + '\n$$');
+      else if (k === 1) parts.push('```\n$$\n$x$\n```');
+      else if (k === 2) parts.push('> quote ' + bits[rnd(bits.length)] + tails[rnd(2)]);
+      else if (k === 3) parts.push('- item ' + bits[rnd(bits.length)] + '\n- item ' + bits[rnd(bits.length)] + tails[rnd(2)]);
+      else if (k === 4) parts.push('# H ' + bits[rnd(bits.length)]);
+      else {
+        let p = '';
+        for (let j = 0, n = 1 + rnd(5); j < n; j++) p += bits[rnd(bits.length)] + ' ';
+        if (rnd(3) === 0) p += '\n$$' + (rnd(2) ? '' : ' x $$');
+        parts.push(p + tails[rnd(2)]);
+      }
+    }
+    docs.push(parts.join(rnd(4) === 0 ? '\n' : '\n\n') + '\n');
+  }
+  const a = new Marked(createMathExtension());
+  const b = new Marked(reference(createMathExtension()));
+  for (const d of docs) assert.equal(a.parse(d), b.parse(d), JSON.stringify(d));
 });

@@ -23,21 +23,60 @@ const INLINE = /^\$(?![\s$])((?:\\.|[^\\$\n])+?)(?<!\s)\$(?!\d)/;
 // the same text. Scanning the whole remainder each time made lexing quadratic,
 // so the next candidate is remembered as a distance from the END of the string
 // (stable as the suffix shrinks) and only searched for again once passed.
-// Entries are validated by the string's tail, so unrelated strings (nested
-// blocks reuse the same lexer) never share a result.
-const TAIL = 64;
-const memo = new WeakMap(); // lexer -> { [key]: { len, tail, fromEnd } }
-function next(lexer, key, src, scan) {
+//
+// Why this is sound: marked's lexer works in "runs" (one blockTokens or
+// inlineTokens call). Inside a run it only ever consumes from the FRONT
+// (`src = src.substring(n)`), and calls `start` with `src.slice(1)`, so every
+// string a run passes to `start` is a suffix of the string the run began with.
+// Two suffixes of one string with lengths a >= b agree on their last b
+// characters, so a candidate found in the longer one that still lies inside
+// the shorter one is the first candidate there too (candidates depend only on
+// the text from the candidate onwards, and nothing earlier can exist, since the
+// longer scan found none before it). The memo therefore lives in a per-run
+// frame: the lexer's blockTokens / inlineTokens are wrapped to push a frame,
+// and a frame is never shared with another run (nested runs get their own).
+// Strings are never compared by content. The one run already in progress when
+// the wrapper is installed gets an implicit frame at the bottom of the stack;
+// every later run is wrapped, so no unwrapped run can see it. A length that
+// grows (cannot happen within a run) resets the frame as a safeguard.
+const lexers = new WeakMap(); // lexer -> { block: Frame[], inline: Frame[] }
+const newFrame = () => ({ len: Infinity, fromEnd: -1, known: false });
+
+function stacksFor(lexer) {
+  let st = lexers.get(lexer);
+  if (st) return st;
+  st = { block: [], inline: [] };
+  lexers.set(lexer, st);
+  for (const [kind, method] of [['block', 'blockTokens'], ['inline', 'inlineTokens']]) {
+    const orig = lexer[method];
+    lexer[method] = function (...args) {
+      const stack = st[kind];
+      stack.push(newFrame());
+      try {
+        return orig.apply(this, args);
+      } finally {
+        stack.pop();
+      }
+    };
+  }
+  return st;
+}
+
+// minPos: the lowest index a candidate may have in a suffix (block candidates
+// need the preceding "\n" inside the string).
+function next(lexer, kind, src, scan, minPos) {
+  const stack = stacksFor(lexer)[kind];
+  if (!stack.length) stack.push(newFrame()); // implicit frame, see above
+  const f = stack[stack.length - 1];
   const len = src.length;
-  let m = memo.get(lexer);
-  if (!m) memo.set(lexer, (m = {}));
-  const e = m[key];
-  if (e && len > TAIL && len <= e.len && src.endsWith(e.tail)) {
-    if (e.fromEnd === 0) return undefined; // none anywhere in the longer suffix
-    if (len - e.fromEnd >= 0) return len - e.fromEnd;
+  if (f.known && len <= f.len) {
+    if (f.fromEnd === 0) return undefined; // no candidate anywhere in the longer suffix
+    if (len - f.fromEnd >= minPos) return len - f.fromEnd;
   }
   const pos = scan(src);
-  m[key] = { len, tail: src.slice(-TAIL), fromEnd: pos < 0 ? 0 : len - pos };
+  f.known = true;
+  f.len = len;
+  f.fromEnd = pos < 0 ? 0 : len - pos;
   return pos < 0 ? undefined : pos;
 }
 
@@ -57,36 +96,40 @@ const placeholder = (display, tex, block) => {
   return `<${tag} class="${cls}" data-tex="${e}">${e}</${tag}>`;
 };
 
-export const mathExtension = {
-  extensions: [
-    {
-      name: 'mathBlock',
-      level: 'block',
-      start(src) {
-        return next(this.lexer, 'block', src, scanBlock);
+export function createMathExtension() {
+  return {
+    extensions: [
+      {
+        name: 'mathBlock',
+        level: 'block',
+        start(src) {
+          return next(this.lexer, 'block', src, scanBlock, 1);
+        },
+        tokenizer(src) {
+          BLOCK.lastIndex = 0;
+          const m = BLOCK.exec(src);
+          if (!m || !m[1].trim()) return undefined;
+          return { type: 'mathBlock', raw: m[0] + (src[m[0].length] === '\n' ? '\n' : ''), text: m[1].trim() };
+        },
+        renderer: (t) => placeholder(true, t.text, true),
       },
-      tokenizer(src) {
-        BLOCK.lastIndex = 0;
-        const m = BLOCK.exec(src);
-        if (!m || !m[1].trim()) return undefined;
-        return { type: 'mathBlock', raw: m[0] + (src[m[0].length] === '\n' ? '\n' : ''), text: m[1].trim() };
+      {
+        name: 'mathInline',
+        level: 'inline',
+        start(src) {
+          return next(this.lexer, 'inline', src, (t) => t.indexOf('$'), 0);
+        },
+        tokenizer(src) {
+          let m = INLINE_DISPLAY.exec(src);
+          if (m && m[1].trim()) return { type: 'mathInline', raw: m[0], text: m[1].trim(), display: true };
+          m = INLINE.exec(src);
+          if (m) return { type: 'mathInline', raw: m[0], text: m[1], display: false };
+          return undefined;
+        },
+        renderer: (t) => placeholder(t.display, t.text, false),
       },
-      renderer: (t) => placeholder(true, t.text, true),
-    },
-    {
-      name: 'mathInline',
-      level: 'inline',
-      start(src) {
-        return next(this.lexer, 'inline', src, (t) => t.indexOf('$'));
-      },
-      tokenizer(src) {
-        let m = INLINE_DISPLAY.exec(src);
-        if (m && m[1].trim()) return { type: 'mathInline', raw: m[0], text: m[1].trim(), display: true };
-        m = INLINE.exec(src);
-        if (m) return { type: 'mathInline', raw: m[0], text: m[1], display: false };
-        return undefined;
-      },
-      renderer: (t) => placeholder(t.display, t.text, false),
-    },
-  ],
-};
+    ],
+  };
+}
+
+export const mathExtension = createMathExtension();
