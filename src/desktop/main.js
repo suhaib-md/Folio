@@ -10,6 +10,8 @@ import { decide } from './reload.js';
 import { basename, resolveRelative, isMarkdownPath } from './paths.js';
 import { renderTree } from './sidebar.js';
 import { renderRecent } from './recent.js';
+import { renderOutline } from './outline-view.js';
+import { extractHeadings, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
 
 const renderMarkdown = createRenderer(window);
 const $ = (id) => document.getElementById(id);
@@ -28,6 +30,14 @@ const tabBanner = $('tab-banner');
 const tabBannerText = $('tab-banner-text');
 const tabBannerActions = $('tab-banner-actions');
 const sidebarEl = $('sidebar');
+const filesTree = $('files-tree');
+const filesEmpty = $('files-empty');
+const outlinePanel = $('sidebar-panel-outline');
+const searchEmpty = $('search-empty');
+const searchPanel = $('search-panel');
+const SIDEBAR_TABS = ['files', 'outline', 'search'];
+const sidebarTabEl = (name) => $(`sidebar-tab-${name}`);
+const sidebarPanelEl = (name) => $(`sidebar-panel-${name}`);
 const recentEl = $('recent');
 
 // Split re-renders the preview PREVIEW_DELAY ms after typing stops (spec:
@@ -56,14 +66,16 @@ let folderSeq = 0; // bumped when another folder is opened
 let expanded = new Set(); // normalizePath() keys of expanded folders (root always is)
 let treeVersion = 0; // bumped when `folder` or `expanded` change
 let lastSidebarKey = null;
-// The user's Ctrl+B choice. Narrow windows hide the sidebar without
+// The user's Ctrl+Shift+B choice; null until they make one, which means
+// "shown while a folder is open". Narrow windows hide the sidebar without
 // changing it, so it comes back when the window widens.
-let sidebarWanted = true;
+let sidebarWanted = null;
+let sidebarTab = 'files'; // 'files' | 'outline' | 'search'
 
 let recent = { files: [], folders: [] }; // as last returned by the backend
 let lastRecentKey = null;
 
-const editor = createEditor(editorEl, { onChange: onEditorChange });
+const editor = createEditor(editorEl, { onChange: onEditorChange, onCursor: onEditorCursor });
 
 // ---- state ---------------------------------------------------------------
 
@@ -324,15 +336,36 @@ function toggleFolder(path) {
   render();
 }
 
-// Ctrl+B. Hiding it with focus inside moves focus to the document.
+const sidebarIsWanted = () => sidebarWanted ?? !!folder;
+const sidebarIsShown = () => sidebarIsWanted() && roomy.matches;
+
+// Ctrl+Shift+B. Hiding it with focus inside moves focus to the document.
 function toggleSidebar() {
-  sidebarWanted = !sidebarWanted;
+  sidebarWanted = !sidebarIsWanted();
   const hadFocus = sidebarEl.contains(document.activeElement);
   render();
   if (hadFocus && sidebarEl.hidden) {
     if (showsEditor(view)) editor.focus();
     else content.focus({ preventScroll: true });
   }
+}
+
+// Show the sidebar (on `tab`, when given). Ctrl+Shift+L passes `focus` to
+// land on the Outline's current item. A window too narrow for a sidebar
+// keeps it hidden; the choice comes back when it widens.
+function showSidebar(tab, { focus = false } = {}) {
+  if (tab) sidebarTab = tab;
+  sidebarWanted = true;
+  render();
+  if (focus && !sidebarEl.hidden) focusSidebarTab();
+}
+
+function focusSidebarTab() {
+  const panel = sidebarPanelEl(sidebarTab);
+  const target = sidebarTab === 'outline'
+    ? panel.querySelector('.outline-item[aria-current]') || panel.querySelector('.outline-item')
+    : null;
+  (target || sidebarTabEl(sidebarTab)).focus({ preventScroll: true });
 }
 
 // folder-changed: re-list, keeping `expanded`. Events during a re-list are
@@ -490,6 +523,8 @@ function closeTabNow(id) {
   editor.destroyState(id);
   beforeSplit.delete(id);
   renderCost.delete(id);
+  outlineCache.delete(id);
+  collapsedByTab.delete(id);
 }
 
 const closing = new Map(); // tab id -> in-flight close flow
@@ -733,6 +768,7 @@ function renderNow() {
   }
 
   syncWatch();
+  syncOutlineCurrent();
 
   const title = T.windowTitle(state);
   if (title !== lastTitle) {
@@ -741,23 +777,239 @@ function renderNow() {
   }
 }
 
-// Rebuilt only when the tree, what is expanded, or the active file changed.
+// Which sidebar tab was laid out last, and the scroll positions of tabs
+// that have been left (a hidden panel forgets its scroll).
+let laidOutTab = null;
+const panelScroll = new Map();
+const scrollerOf = (name) => (name === 'files' ? filesTree.querySelector('.tree-scroll') : name === 'outline' ? outlinePanel : null);
+
+// Only the selected tab's content is built. The tree is rebuilt only when it,
+// what is expanded, or the active file changed.
 function renderSidebar(tab) {
-  const visible = !!folder && sidebarWanted && roomy.matches;
+  const visible = sidebarIsShown();
+  if (laidOutTab) {
+    const scroller = scrollerOf(laidOutTab);
+    if (scroller && (!visible || laidOutTab !== sidebarTab)) panelScroll.set(laidOutTab, scroller.scrollTop);
+  }
   sidebarEl.hidden = !visible;
-  if (!visible) return;
-  const activePath = tab?.path ?? null;
-  const key = `${treeVersion}|${activePath == null ? '' : T.normalizePath(activePath)}`;
-  if (key === lastSidebarKey) return;
-  lastSidebarKey = key;
-  renderTree(sidebarEl, folder.root, {
-    activePath,
-    expanded,
-    truncated: folder.truncated,
-    onOpen: (path) => openPaths([path]),
-    onToggle: toggleFolder,
+  if (!visible) {
+    laidOutTab = null;
+    stopOutline();
+    return;
+  }
+  for (const name of SIDEBAR_TABS) {
+    const on = name === sidebarTab;
+    const btn = sidebarTabEl(name);
+    btn.setAttribute('aria-selected', String(on));
+    btn.tabIndex = on ? 0 : -1;
+    sidebarPanelEl(name).hidden = !on;
+  }
+
+  if (sidebarTab === 'files') {
+    filesEmpty.hidden = !!folder;
+    filesTree.hidden = !folder;
+    if (folder) {
+      const activePath = tab?.path ?? null;
+      const key = `${treeVersion}|${activePath == null ? '' : T.normalizePath(activePath)}`;
+      if (key !== lastSidebarKey) {
+        lastSidebarKey = key;
+        renderTree(filesTree, folder.root, {
+          activePath,
+          expanded,
+          truncated: folder.truncated,
+          onOpen: (path) => openPaths([path]),
+          onToggle: toggleFolder,
+        });
+      }
+    }
+  } else if (sidebarTab === 'search') {
+    searchEmpty.hidden = !!folder;
+    searchPanel.hidden = !folder;
+  }
+  if (sidebarTab === 'outline') syncOutline(tab);
+  else stopOutline();
+
+  if (laidOutTab !== sidebarTab) {
+    const scroller = scrollerOf(sidebarTab);
+    const top = panelScroll.get(sidebarTab);
+    if (scroller && top) scroller.scrollTop = top;
+  }
+  laidOutTab = sidebarTab;
+}
+
+// ---- outline -------------------------------------------------------------
+
+const EMPTY_ENTRY = { id: null, text: null, headings: [], outline: [] };
+const outlineCache = new Map(); // tab id -> { id, text, headings, outline } for that text
+const collapsedByTab = new Map(); // tab id -> Set of collapsed node indexes
+let outlineEntry = EMPTY_ENTRY; // what the panel shows
+let outlineLive = false; // the panel is on screen and following the document
+let outlineTimer = null;
+let outlineCurrent = -1; // heading index of the current section
+let outlineScrollQueued = false;
+let lastCurrentKey = null;
+
+function collapsedFor(id) {
+  let set = collapsedByTab.get(id);
+  if (!set) collapsedByTab.set(id, (set = new Set()));
+  return set;
+}
+
+function computeOutline(tab) {
+  const prev = outlineCache.get(tab.id);
+  const headings = extractHeadings(tab.text);
+  // Indexes no longer correspond once the heading count changes.
+  if (prev && prev.headings.length !== headings.length) collapsedByTab.delete(tab.id);
+  const entry = { id: tab.id, text: tab.text, headings, outline: buildOutline(headings) };
+  outlineCache.set(tab.id, entry);
+  return entry;
+}
+
+function cancelOutlineTimer() {
+  clearTimeout(outlineTimer);
+  outlineTimer = null;
+}
+
+function stopOutline() {
+  cancelOutlineTimer();
+  outlineLive = false;
+}
+
+// Switching tabs (or showing the panel) updates the outline at once; typing
+// waits for the same pause as the Split preview.
+function syncOutline(tab) {
+  const cached = tab ? outlineCache.get(tab.id) : null;
+  if (!tab) {
+    cancelOutlineTimer();
+    setOutlineEntry(EMPTY_ENTRY);
+  } else if (cached && cached.text === tab.text) {
+    cancelOutlineTimer();
+    setOutlineEntry(cached);
+  } else if (outlineLive && outlineEntry.id === tab.id) {
+    cancelOutlineTimer();
+    outlineTimer = setTimeout(() => {
+      outlineTimer = null;
+      editor.flush(); // a batched edit may still be pending (big documents)
+      cancelOutlineTimer(); // ... and its render re-armed this timer
+      const now = activeTab();
+      if (outlineLive && now && now.id === tab.id) {
+        setOutlineEntry(computeOutline(now));
+        syncOutlineCurrent(true);
+      }
+    }, previewDelay(tab));
+  } else {
+    cancelOutlineTimer();
+    setOutlineEntry(computeOutline(tab));
+  }
+  outlineLive = true;
+}
+
+function setOutlineEntry(entry) {
+  if (entry === outlineEntry && outlineLive) return;
+  outlineEntry = entry;
+  lastCurrentKey = null;
+  outlineCurrent = -1;
+  syncOutlineCurrent(true, { draw: false });
+  drawOutline(true);
+}
+
+function drawOutline(reveal) {
+  renderOutline(outlinePanel, outlineEntry.outline, {
+    current: outlineCurrent,
+    collapsed: outlineEntry.id ? collapsedFor(outlineEntry.id) : new Set(),
+    onJump: jumpToHeading,
+    onToggle: (index) => {
+      const set = collapsedFor(outlineEntry.id);
+      if (set.has(index)) set.delete(index);
+      else set.add(index);
+      drawOutline(false);
+    },
+  });
+  if (reveal) outlinePanel.querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest' });
+}
+
+// The heading index the document is at: the cursor's section in Edit, the
+// last heading at or above the top of the visible document otherwise.
+// Headings are matched to the rendered ones by id, so raw-HTML headings (which
+// have no outline entry) and a Split preview that lags behind are harmless.
+function computeCurrent() {
+  const { headings } = outlineEntry;
+  if (!headings.length) return -1;
+  if (view === 'edit') return headingIndexForLine(headings, editor.cursorLine());
+  const tab = activeTab();
+  if (!tab || shown.id !== tab.id || content.hidden) return -1;
+  const base = content.getBoundingClientRect().top - content.scrollTop;
+  const tops = [];
+  const indexes = [];
+  headings.forEach((h, i) => {
+    const el = document.getElementById(`user-content-${h.id}`);
+    if (!el || !doc.contains(el)) return;
+    // The heading's scroll-margin is where scrolling to it puts it.
+    const margin = parseFloat(getComputedStyle(el).scrollMarginTop) || 0;
+    tops.push(el.getBoundingClientRect().top - base - margin);
+    indexes.push(i);
+  });
+  const at = currentIndex(tops, content.scrollTop);
+  if (at >= 0) return indexes[at];
+  // At the very top, before the first heading's margin: the first heading.
+  return content.scrollTop < 1 && indexes.length ? indexes[0] : -1;
+}
+
+// `force`: a scroll or cursor move. Otherwise (a render) the rendered
+// document is only measured when it or the outline changed, so typing in
+// Split never forces a layout.
+function syncOutlineCurrent(force = false, { draw = true } = {}) {
+  if (!outlineLive || sidebarEl.hidden || sidebarTab !== 'outline') return;
+  if (!force && view !== 'edit') {
+    const key = [state.activeId, view, shown.text, outlineEntry];
+    if (lastCurrentKey && key.every((v, i) => v === lastCurrentKey[i])) return;
+    lastCurrentKey = key;
+  }
+  const idx = computeCurrent();
+  if (idx === outlineCurrent) return;
+  outlineCurrent = idx;
+  if (draw) drawOutline(true);
+}
+
+function queueOutlineCurrent() {
+  if (outlineScrollQueued) return;
+  outlineScrollQueued = true;
+  requestAnimationFrame(() => {
+    outlineScrollQueued = false;
+    syncOutlineCurrent(true);
   });
 }
+
+content.addEventListener('scroll', queueOutlineCurrent, { passive: true });
+window.addEventListener('resize', queueOutlineCurrent);
+
+function onEditorCursor() {
+  if (view === 'edit') syncOutlineCurrent(true);
+}
+
+function jumpToHeading(node) {
+  if (showsDoc(view)) scrollDocToId(node.id);
+  if (showsEditor(view)) {
+    editor.revealLine(node.line);
+    if (view === 'edit') editor.focus();
+  }
+}
+
+for (const name of SIDEBAR_TABS) {
+  sidebarTabEl(name).addEventListener('click', () => showSidebar(name));
+}
+// Arrow keys move between the tabs (and select them).
+$('sidebar').querySelector('.sidebar-tabs').addEventListener('keydown', (e) => {
+  const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+  const home = e.key === 'Home' ? 0 : e.key === 'End' ? SIDEBAR_TABS.length - 1 : null;
+  if (!step && home === null) return;
+  const i = SIDEBAR_TABS.indexOf(sidebarTab);
+  const next = SIDEBAR_TABS[home ?? (i + step + SIDEBAR_TABS.length) % SIDEBAR_TABS.length];
+  e.preventDefault();
+  showSidebar(next);
+  sidebarTabEl(next).focus();
+});
+$('sidebar-open-folder').addEventListener('click', pickFolderAndOpen);
 
 function renderRecentList() {
   const key = JSON.stringify(recent);
@@ -894,6 +1146,16 @@ tabbar.addEventListener('auxclick', (e) => {
 
 // ---- links in the document -----------------------------------------------
 
+// Scroll the rendered document (Read, or the Split preview) so the element
+// with this id is at the top. `id` is the raw slug; the sanitiser prefixes
+// ids with "user-content-". Returns whether it was found.
+function scrollDocToId(id) {
+  const target = document.getElementById(`user-content-${id}`) || document.getElementById(id);
+  if (!target || !doc.contains(target)) return false;
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return true;
+}
+
 function scrollToAnchor(href) {
   let hash = href.slice(1);
   try {
@@ -901,9 +1163,7 @@ function scrollToAnchor(href) {
   } catch {
     // keep as written
   }
-  // The sanitiser prefixes ids with "user-content-".
-  const target = document.getElementById(`user-content-${hash}`) || document.getElementById(hash);
-  if (target && doc.contains(target)) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  scrollDocToId(hash);
 }
 
 doc.addEventListener('click', (e) => {
@@ -954,8 +1214,10 @@ window.addEventListener('keydown', (e) => {
   let action;
   if (key === 'o') {
     action = plain ? pickAndOpen : pickFolderAndOpen;
-  } else if (key === 'b' && plain) {
+  } else if (key === 'b' && e.shiftKey) {
     action = toggleSidebar;
+  } else if (key === 'l' && e.shiftKey) {
+    action = () => showSidebar('outline', { focus: true });
   } else if (key === 'n' && plain) {
     action = newFile;
   } else if (key === 's') {

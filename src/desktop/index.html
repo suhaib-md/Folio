@@ -10,7 +10,24 @@
 </head>
 <body>
 <div class="app">
-  <aside id="sidebar" class="sidebar" aria-label="Folder" hidden></aside>
+  <aside id="sidebar" class="sidebar" aria-label="Sidebar" hidden>
+    <div class="sidebar-tabs" role="tablist" aria-label="Sidebar views">
+      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-files" data-tab="files" aria-controls="sidebar-panel-files" aria-selected="true" title="Files">Files</button>
+      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-outline" data-tab="outline" aria-controls="sidebar-panel-outline" aria-selected="false" tabindex="-1" title="Outline (Ctrl+Shift+L)">Outline</button>
+      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-search" data-tab="search" aria-controls="sidebar-panel-search" aria-selected="false" tabindex="-1" title="Search">Search</button>
+    </div>
+    <div id="sidebar-panel-files" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-tab-files">
+      <div id="files-tree" class="files-tree"></div>
+      <div id="files-empty" class="sidebar-empty" hidden>
+        <button id="sidebar-open-folder" type="button" class="btn" title="Open a folder (Ctrl+Shift+O)">Open folder</button>
+      </div>
+    </div>
+    <div id="sidebar-panel-outline" class="sidebar-panel outline-panel" role="tabpanel" aria-labelledby="sidebar-tab-outline" hidden></div>
+    <div id="sidebar-panel-search" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-tab-search" hidden>
+      <p id="search-empty" class="sidebar-empty-text" hidden>Open a folder to search it.</p>
+      <div id="search-panel" class="search-panel" hidden></div>
+    </div>
+  </aside>
 
   <div class="main">
     <div id="tabbar" class="tabbar" role="tablist" aria-label="Open files" hidden></div>

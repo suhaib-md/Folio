@@ -150,11 +150,13 @@ const LAZY_LENGTH = 256 * 1024;
 const PAUSE = 250;
 const MAX_WAIT = 1000;
 
-export function createEditor(parent, { onChange }) {
+export function createEditor(parent, { onChange, onCursor = () => {} }) {
   const states = new Map(); // tab id -> EditorState (tabs not on screen)
   const scrolls = new Map(); // tab id -> scroll snapshot effect
   let current = null; // tab id whose state is in the view
   let pending = null; // { timer, since } while a batched onChange is due
+  let cursorAt = 0; // line the cursor was last seen on (0: unknown)
+  let cursorFrame = 0; // requestAnimationFrame id while an onCursor is due
 
   function flush() {
     if (!pending) return;
@@ -189,6 +191,19 @@ export function createEditor(parent, { onChange }) {
     theme,
     EditorView.updateListener.of((u) => {
       if (u.docChanged && current != null) changed(u.state.doc);
+      if ((u.selectionSet || u.docChanged) && current != null) {
+        const line = u.state.doc.lineAt(u.state.selection.main.head).number;
+        if (line !== cursorAt) {
+          cursorAt = line;
+          // One call per animation frame, with the line it ended on.
+          if (!cursorFrame) {
+            cursorFrame = requestAnimationFrame(() => {
+              cursorFrame = 0;
+              if (current != null) onCursor(cursorAt);
+            });
+          }
+        }
+      }
     }),
   ];
   const newState = (text) => EditorState.create({ doc: text, extensions });
@@ -235,6 +250,7 @@ export function createEditor(parent, { onChange }) {
       }
       park();
       current = tabId;
+      cursorAt = 0;
       const cached = states.get(tabId);
       const fresh = !cached || !sameDoc(cached, text);
       view.setState(fresh ? newState(text) : cached);
@@ -258,11 +274,40 @@ export function createEditor(parent, { onChange }) {
     focus: () => view.focus(),
     openSearch: () => openSearchPanel(view),
 
+    // 1-based line of the cursor.
+    cursorLine: () => view.state.doc.lineAt(view.state.selection.main.head).number,
+
+    // Cursor to the start of `line` (clamped), scrolled to the top of the
+    // editor. Does not take focus.
+    revealLine(line) {
+      const doc = view.state.doc;
+      const pos = doc.line(Math.min(Math.max(1, Math.floor(line) || 1), doc.lines)).from;
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 8 }),
+      });
+    },
+
+    // Selects characters [start, end) of `line` (offsets within that line,
+    // clamped) and scrolls them into view. Does not take focus.
+    selectRange(line, start, end) {
+      const doc = view.state.doc;
+      const l = doc.line(Math.min(Math.max(1, Math.floor(line) || 1), doc.lines));
+      const at = (n) => l.from + Math.min(Math.max(0, n), l.length);
+      const from = at(start);
+      const to = Math.max(from, at(end));
+      view.dispatch({
+        selection: { anchor: from, head: to },
+        effects: EditorView.scrollIntoView(from, { y: 'center' }),
+      });
+    },
+
     destroyState(tabId) {
       states.delete(tabId);
       scrolls.delete(tabId);
       if (current === tabId) {
         dropPending();
+        cursorAt = 0;
         current = null;
         view.setState(newState(''));
       }
