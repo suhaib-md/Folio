@@ -22,6 +22,9 @@
 //   opened, watched, closed, recent   what the app asked for
 //   settings            what settings.json would hold (localStorage
 //                      'folio-fake-settings'), or null
+//   exportPath         set to a path (or null to cancel) to answer the Export
+//                      HTML save dialog; unset it answers /demo/<default name>
+//   exportDefaultName  the default name the last export dialog was given
 //   failWrites         (get/set) writes reject with "permission denied"
 // URL flags: ?failWrites=1 makes writeFile and writeImage reject with
 // "permission denied";
@@ -256,6 +259,16 @@ export async function writeImage(path, base64) {
   folderChanged(path);
 }
 
+// Same checks and error strings as folio-core image.rs read_image.
+export async function readImageBase64(path) {
+  if (!IMAGE_EXT.test(path)) throw 'not an image file';
+  if (!(path in fs)) throw 'file not found';
+  const m = /^data:[^,]*;base64,(.*)$/s.exec(fs[path]);
+  if (!m) throw 'not an image file';
+  if (m[1].length * 0.75 > 10 * 1024 * 1024) throw 'too large';
+  return m[1];
+}
+
 // Same rules as the Rust lister: .md/.markdown files, folders only if they
 // contain some (recursively), folders named ".*" or node_modules skipped,
 // folders first then files, case-insensitive.
@@ -463,6 +476,13 @@ export async function pickFolder() {
 
 export async function pickSavePath(/* defaultName */) {
   return '/demo/saved.md';
+}
+
+// Test hook: window.__fake.exportPath overrides the answer; null cancels.
+export async function pickExportPath(defaultName) {
+  if ('exportPath' in fake) return fake.exportPath;
+  fake.exportDefaultName = defaultName;
+  return `/demo/${defaultName}`;
 }
 
 export async function openExternal(url) {

@@ -12,12 +12,14 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import * as fake from './fake-backend.js';
 
 const MARKDOWN_FILTER = { name: 'Markdown', extensions: ['md', 'markdown'] };
+const HTML_FILTER = { name: 'HTML', extensions: ['html'] };
 
 const real = {
   launchPaths: () => invoke('launch_paths'),
   readFile: (path) => invoke('read_file', { path }),
   writeFile: (path, text, eol, bom) => invoke('write_file', { path, text, eol, bom }),
   writeImage: (path, base64) => invoke('write_image', { path, base64 }),
+  readImageBase64: (path) => invoke('read_image', { path }),
   listTree: (folder) => invoke('list_tree', { folder }),
   searchFolder: (folder, query, matchCase, requestId) =>
     invoke('search_folder', { folder, query, matchCase, requestId }),
@@ -45,6 +47,9 @@ const real = {
   },
   async pickSavePath(defaultName) {
     return (await save({ defaultPath: defaultName, filters: [MARKDOWN_FILTER] })) || null;
+  },
+  async pickExportPath(defaultName) {
+    return (await save({ defaultPath: defaultName, filters: [HTML_FILTER] })) || null;
   },
   openExternal: (url) => openUrl(url),
   assetUrl: (path) => convertFileSrc(path),
@@ -75,6 +80,7 @@ export const launchPaths = () => impl.launchPaths();
 export const readFile = (path) => impl.readFile(path);
 export const writeFile = (path, text, eol, bom) => impl.writeFile(path, text, eol, bom);
 export const writeImage = (path, base64) => impl.writeImage(path, base64);
+export const readImageBase64 = (path) => impl.readImageBase64(path);
 export const listTree = (folder) => impl.listTree(folder);
 // Request ids must increase monotonically, also across webview reloads (the
 // Rust side keeps the highest id seen and cancels any lower one); callers
@@ -94,6 +100,7 @@ export const appInfo = () => impl.appInfo();
 export const pickFiles = () => impl.pickFiles();
 export const pickFolder = () => impl.pickFolder();
 export const pickSavePath = (defaultName) => impl.pickSavePath(defaultName);
+export const pickExportPath = (defaultName) => impl.pickExportPath(defaultName);
 export const openExternal = (url) => impl.openExternal(url);
 export const assetUrl = (path) => impl.assetUrl(path);
 export const onOpenPaths = (cb) => impl.onOpenPaths(cb);

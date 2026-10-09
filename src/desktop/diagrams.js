@@ -90,7 +90,7 @@ function showError(pre, message) {
 const mathCache = new Map(); // display + errorColor + tex -> detached rendered element
 const MATH_CACHE_MAX = 500;
 
-async function renderMath(nodes, myGen) {
+async function renderMath(nodes, alive) {
   linkKatexCss();
   let katex;
   try {
@@ -99,7 +99,7 @@ async function renderMath(nodes, myGen) {
     console.warn('loading KaTeX failed:', err);
     return; // the TeX source stays visible
   }
-  if (myGen !== generation) return;
+  if (!alive()) return;
   // Inline style beats CSS, so the error colour comes from the theme here.
   const errorColor = getComputedStyle(document.documentElement).getPropertyValue('--danger-fg').trim() || '#cc0000';
   for (const el of nodes) {
@@ -146,7 +146,7 @@ function codeBlock(source) {
   return pre;
 }
 
-async function renderDiagrams(items, theme, myGen) {
+async function renderDiagrams(items, theme, alive) {
   // Cached results go in synchronously (no flicker, no Mermaid load).
   const todo = [];
   for (const item of items) {
@@ -164,15 +164,15 @@ async function renderDiagrams(items, theme, myGen) {
   try {
     mermaid = await loadMermaid(theme);
   } catch (err) {
-    if (myGen === generation) for (const t of todo) fail(t, err?.message || 'Mermaid failed to load');
+    if (alive()) for (const t of todo) fail(t, err?.message || 'Mermaid failed to load');
     return;
   }
   for (const item of todo) {
-    if (myGen !== generation) return;
+    if (!alive()) return;
     const id = `folio-mermaid-${++diagramSeq}`;
     try {
       const { svg } = await mermaid.render(id, item.source);
-      if (myGen !== generation) return;
+      if (!alive()) return;
       const clean = sanitizeSvg(svg);
       if (!clean || !svgNode(clean)) throw new Error('empty diagram');
       const entry = { svg: clean, id };
@@ -182,7 +182,7 @@ async function renderDiagrams(items, theme, myGen) {
       // Mermaid leaves a temporary error element behind in <body>.
       document.getElementById(`d${id}`)?.remove();
       document.getElementById(id)?.remove();
-      if (myGen !== generation) return;
+      if (!alive()) return;
       fail(item, String(err?.message || err).split('\n')[0]);
     }
   }
@@ -200,8 +200,11 @@ function fail(item, message) {
 
 // Enhance the rendered document in place. A later call (or reset) abandons
 // any run still in flight, so a stale run never writes into a replaced DOM.
-export async function renderEnhancements(docEl, { theme }) {
-  const myGen = ++generation;
+// `isolated: true` is for a detached copy (export, print): it neither abandons
+// nor is abandoned by the runs for the live document.
+export async function renderEnhancements(docEl, { theme, isolated = false }) {
+  const myGen = isolated ? 0 : ++generation;
+  const alive = isolated ? () => true : () => myGen === generation;
   const maths = [...docEl.querySelectorAll('.math-inline, .math-display')];
   // Fresh code blocks, plus diagrams already drawn (a theme change redraws them).
   const items = [];
@@ -214,7 +217,7 @@ export async function renderEnhancements(docEl, { theme }) {
     }
   }
   const jobs = [];
-  if (maths.length) jobs.push(renderMath(maths, myGen));
-  if (items.length) jobs.push(renderDiagrams(items, theme, myGen));
+  if (maths.length) jobs.push(renderMath(maths, alive));
+  if (items.length) jobs.push(renderDiagrams(items, theme, alive));
   await Promise.all(jobs);
 }

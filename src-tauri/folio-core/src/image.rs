@@ -21,6 +21,27 @@ fn is_image(path: &Path) -> bool {
         .is_some_and(|e| IMAGE_EXTENSIONS.iter().any(|x| x.eq_ignore_ascii_case(e)))
 }
 
+/// Largest image `read_image` returns (export embeds it as base64).
+pub const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Reads an image file for embedding. Same extension rule as `write_image`;
+/// files over 10 MB fail with "too large" without being read.
+pub fn read_image(path: &Path) -> Result<Vec<u8>, String> {
+    if !is_image(path) {
+        return Err("not an image file".to_string());
+    }
+    let meta = fs::metadata(path).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound { "file not found".to_string() } else { io_err(e) }
+    })?;
+    if !meta.is_file() {
+        return Err("not an image file".to_string());
+    }
+    if meta.len() > MAX_READ_BYTES {
+        return Err("too large".to_string());
+    }
+    fs::read(path).map_err(io_err)
+}
+
 /// Writes `bytes` to `path` without ever replacing an existing file.
 ///
 /// The parent folder is created. The data goes through `atomic_write` (exclusive
@@ -67,6 +88,24 @@ mod tests {
             assert!(!p.exists());
         }
         assert!(!d.path().join("images").exists());
+    }
+
+    #[test]
+    fn reads_image_and_refuses_bad_ones() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.PNG");
+        fs::write(&p, [1, 2, 3]).unwrap();
+        assert_eq!(read_image(&p).unwrap(), vec![1, 2, 3]);
+        let t = d.path().join("a.txt");
+        fs::write(&t, "x").unwrap();
+        assert_eq!(read_image(&t).unwrap_err(), "not an image file");
+        assert_eq!(read_image(&d.path().join("gone.png")).unwrap_err(), "file not found");
+        let big = d.path().join("big.png");
+        let f = fs::File::create(&big).unwrap();
+        f.set_len(MAX_READ_BYTES + 1).unwrap();
+        assert_eq!(read_image(&big).unwrap_err(), "too large");
+        f.set_len(MAX_READ_BYTES).unwrap();
+        assert_eq!(read_image(&big).unwrap().len() as u64, MAX_READ_BYTES);
     }
 
     #[test]

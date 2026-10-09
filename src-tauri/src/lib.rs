@@ -111,6 +111,12 @@ fn write_image(path: String, base64: String) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
+fn read_image(path: String) -> Result<String, String> {
+    let bytes = image::read_image(Path::new(&path))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command(async)]
 fn list_tree(folder: String) -> Result<TreeResult, String> {
     let (root, truncated) = tree::list_tree(Path::new(&folder), TREE_LIMIT)?;
     Ok(TreeResult { root, truncated })
@@ -326,6 +332,7 @@ pub fn run() {
             read_file,
             write_file,
             write_image,
+            read_image,
             list_tree,
             search_folder,
             watch,

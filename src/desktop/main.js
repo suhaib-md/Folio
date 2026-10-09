@@ -24,6 +24,7 @@ import { createAutosave } from './autosave.js';
 import { openMenu, closeMenu } from './menu.js';
 import { renderEnhancements } from './diagrams.js';
 import { effectiveTheme } from './theme.js';
+import { buildExportHtml, collectImages, collectCss } from './exporter.js';
 
 const renderMarkdown = createRenderer(window, { math: true });
 const $ = (id) => document.getElementById(id);
@@ -284,6 +285,7 @@ for (const el of [content, editorEl]) el.addEventListener('wheel', onZoomWheel, 
 // Later tasks append their items here.
 function moreMenuItems() {
   const { theme, zoom } = settings.get();
+  const hasDoc = !!getActiveTab();
   const themeItem = (label, value) => ({
     label,
     checked: theme === value,
@@ -305,6 +307,9 @@ function moreMenuItems() {
     { label: 'Zoom out', onSelect: () => zoomBy(-1) },
     { label: 'Reset zoom', onSelect: () => zoomBy(0) },
     { label: `Zoom: ${zoom}%`, disabled: true },
+    'separator',
+    { label: 'Export HTML…', disabled: !hasDoc, onSelect: exportHtml },
+    { label: 'Print…', disabled: !hasDoc, onSelect: printDoc },
     'separator',
     { label: 'About Folio', onSelect: showAbout },
   ];
@@ -1622,18 +1627,29 @@ function renderTabs() {
   activeEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
-// Render into a detached template first so relative <img> sources are
-// rewritten before the browser tries to load them.
-function renderDoc(tab) {
+// The rendered document of a tab as a fragment. Relative <img> sources are
+// rewritten before the browser tries to load them; the original src and the
+// resolved path stay on the element (data-orig-src / data-local-path) so
+// Export HTML can embed the file. Both attributes are stripped from the export.
+function docFragment(tab) {
   const tpl = document.createElement('template');
   tpl.innerHTML = renderMarkdown(tab.text);
   if (tab.path) {
     for (const img of tpl.content.querySelectorAll('img[src]')) {
-      const p = resolveRelative(tab.path, img.getAttribute('src'));
-      if (p) img.setAttribute('src', backend.assetUrl(p));
+      const orig = img.getAttribute('src');
+      const p = resolveRelative(tab.path, orig);
+      if (p) {
+        img.dataset.origSrc = orig;
+        img.dataset.localPath = p;
+        img.setAttribute('src', backend.assetUrl(p));
+      }
     }
   }
-  doc.replaceChildren(tpl.content);
+  return tpl.content;
+}
+
+function renderDoc(tab) {
+  doc.replaceChildren(docFragment(tab));
   enhanceDoc();
 }
 
@@ -1908,3 +1924,91 @@ async function startup() {
 }
 
 startup().catch((err) => console.error('Folio failed to start:', err));
+
+// ---- export and print ------------------------------------------------------
+
+// A detached, fully drawn copy of a tab's document (maths and diagrams done),
+// independent of what is on screen: Edit mode doesn't render the document at
+// all, and the live one may be mid-enhancement. Diagrams use `theme`.
+async function drawnCopy(tab, theme) {
+  const el = document.createElement('article');
+  el.className = 'markdown';
+  el.append(docFragment(tab));
+  try {
+    await renderEnhancements(el, { theme, isolated: true });
+  } catch (err) {
+    console.warn('maths/diagram rendering failed:', err);
+  }
+  return el;
+}
+
+const fetchOk = async (url) => {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r;
+};
+async function fetchBase64(url) {
+  const bytes = new Uint8Array(await (await fetchOk(url)).arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function exportHtml() {
+  const tab = getActiveTab();
+  if (!tab) return;
+  const stem = tab.title.replace(/\.[^./\\]+$/, '') || 'document';
+  let path;
+  try {
+    path = await backend.pickExportPath(`${stem}.html`);
+  } catch (err) {
+    console.warn('pickExportPath failed:', err);
+    return;
+  }
+  if (!path) return;
+  const name = basename(path);
+  try {
+    const theme = effectiveTheme();
+    const el = await drawnCopy(tab, theme);
+    const images = await collectImages(el, backend.readImageBase64);
+    const css = await collectCss(el, {
+      fetchText: async (url) => (await fetchOk(url)).text(),
+      fetchBase64,
+    });
+    const title = el.querySelector('h1')?.textContent.trim() || stem;
+    const html = buildExportHtml({ title, bodyHtml: el.innerHTML, css, theme, images });
+    await backend.writeFile(path, html, 'lf', false);
+    showBanner(`Exported ${name}.`, 'info');
+  } catch (err) {
+    showBanner(`Couldn't export ${name}: ${errorText(err)}`);
+  }
+}
+
+// Print always prints the rendered document, light, whatever the view: it is
+// drawn into #print-area (hidden on screen, the only thing shown by
+// @media print), so Edit mode and the theme don't matter.
+const printArea = $('print-area');
+async function printDoc() {
+  const tab = getActiveTab();
+  if (!tab) return;
+  const el = await drawnCopy(tab, 'light');
+  printArea.replaceChildren(el);
+  // Pictures load lazily from the asset protocol; wait (briefly) for them.
+  await Promise.race([
+    Promise.all([...el.querySelectorAll('img')].map((img) => img.decode().catch(() => {}))),
+    new Promise((r) => setTimeout(r, 3000)),
+  ]);
+  document.body.classList.add('printing');
+  const done = () => {
+    document.body.classList.remove('printing');
+    printArea.replaceChildren();
+  };
+  window.addEventListener('afterprint', done, { once: true });
+  try {
+    window.print();
+  } catch (err) {
+    window.removeEventListener('afterprint', done);
+    done();
+    showBanner(`Couldn't print: ${errorText(err)}`);
+  }
+}

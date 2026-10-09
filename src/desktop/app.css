@@ -804,3 +804,42 @@ main.content {
   color: var(--danger-fg);
   font-size: 0.85em;
 }
+
+/* ---- print ----------------------------------------------------------------
+   Print… draws the document into #print-area (see printDoc in main.js) and
+   adds body.printing; only that area is printed, always in the light palette. */
+.print-area { display: none; }
+@media print {
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #59636e;
+    --border: #d1d9e0;
+    --subtle: #f6f8fa;
+    --accent: #0969da;
+    --accent-fg: #ffffff;
+    --danger-bg: #ffebe9;
+    --danger-fg: #82071e;
+    --overlay: rgb(9 105 218 / 0.08);
+    --hl-keyword: #cf222e;
+    --hl-string: #0a3069;
+    --hl-number: #0550ae;
+    --hl-title: #8250df;
+    --hl-comment: #6e7781;
+    --hl-attr: #0550ae;
+    --hl-tag: #116329;
+    --hl-variable: #953800;
+    color-scheme: light;
+  }
+  html, body { height: auto; overflow: visible; background: #fff; }
+  body.printing > :not(#print-area) { display: none !important; }
+  body.printing .print-area { display: block; }
+  .print-area .markdown { max-width: none; margin: 0; padding: 0; font-size: 11pt; }
+  .print-area pre, .print-area code { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .print-area pre { print-color-adjust: exact; -webkit-print-color-adjust: exact; overflow: visible; }
+  .print-area pre, .print-area .diagram, .print-area table, .print-area tr, .print-area img,
+  .print-area blockquote { break-inside: avoid; }
+  .print-area h1, .print-area h2, .print-area h3, .print-area h4 { break-after: avoid; }
+  .print-area .diagram { overflow: visible; }
+  .print-area table { display: table; width: auto; max-width: 100%; }
+}
