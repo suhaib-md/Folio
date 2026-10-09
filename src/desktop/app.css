@@ -787,3 +787,20 @@ main.content {
 .menu-label { flex: 1; }
 .menu-arrow { flex: none; margin-left: 12px; font-size: 11px; }
 .menu-separator { height: 1px; margin: 4px 2px; background: var(--border); }
+
+/* ---- maths and diagrams ------------------------------------------------- */
+.markdown .math-display { display: block; margin: 1em 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
+.markdown span.math-display { margin: 0.5em 0; }
+.markdown .katex-display { margin: 0; }
+.markdown .katex { font-size: 1.1em; }
+.markdown .katex-error { color: var(--danger-fg); }
+.markdown .diagram { margin: 1em 0; overflow-x: auto; text-align: center; }
+.markdown .diagram svg { max-width: 100%; height: auto; }
+.markdown .diagram-error {
+  margin: -0.5em 0 1em;
+  padding: 0.35em 0.75em;
+  border-radius: 0 0 6px 6px;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  font-size: 0.85em;
+}

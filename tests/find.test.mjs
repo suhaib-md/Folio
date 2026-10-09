@@ -153,3 +153,15 @@ test('Greek final sigma folds like medial sigma', () => {
   assert.equal(findInText('ΟΔΟΣ ΟΔΟΣ', 'οδοσ', false).length, 2);
   assert.equal(findInText('ΟΔΟΣ', 'οδος', false).length, 1);
 });
+
+test('KaTeX hidden MathML copy is not counted', () => {
+  const { bar, count } = setup('<p>x <span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>x</mi></mrow><annotation>x</annotation></semantics></math></span><span class="katex-html">x</span></span></p>');
+  bar.open('x');
+  assert.equal(count.textContent, '1 of 2');
+});
+
+test('style elements inside SVG are not counted', () => {
+  const { bar, count } = setup('<p>b</p><svg><style>.b { fill: red }</style><text>b</text></svg>');
+  bar.open('b');
+  assert.equal(count.textContent, '1 of 2');
+});

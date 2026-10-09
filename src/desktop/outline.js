@@ -1,7 +1,8 @@
 // Pure heading extraction for the Outline panel. No DOM.
-import { Lexer, Parser } from 'marked';
+import { Lexer, Marked, Parser } from 'marked';
 import GithubSlugger from 'github-slugger';
 import { unescape } from 'marked-gfm-heading-id';
+import { mathExtension } from '../math-extension.js';
 
 // Heading.id is the RAW slug, exactly what marked-gfm-heading-id puts in the
 // heading's id and what `#slug` links carry. In the final DOM the sanitiser
@@ -38,16 +39,20 @@ function countNewlines(s, end = s.length) {
   return n;
 }
 
-export function extractHeadings(text) {
+// `math`: lex heading text with the maths extension too, so the slug matches
+// the renderer's when a heading contains $x$.
+const mathOptions = new Marked(mathExtension).defaults;
+
+export function extractHeadings(text, { math = false } = {}) {
   const out = [];
   const slugger = new GithubSlugger();
   // Block-level pass only: lex() would also tokenise every paragraph's inline
   // content (~3x slower on big files). Heading text is lexed on demand below.
-  const lexer = new Lexer();
+  const lexer = new Lexer(math ? mathOptions : undefined);
   const tokens = lexer.blockTokens(text.replace(/^\uFEFF/, '').replace(/\r\n|\r/g, '\n'), []);
 
   const add = (tok, line) => {
-    const html = Parser.parseInline(lexer.inlineTokens(tok.text));
+    const html = Parser.parseInline(lexer.inlineTokens(tok.text), math ? mathOptions : undefined);
     // Same plain-text rules as marked-gfm-heading-id.
     const raw = unescape(html).trim().replace(/<[!/a-z].*?>/gi, '');
     out.push({
@@ -118,7 +123,7 @@ export function headingIndexForLine(headings, line) {
 // The heading a `#fragment` of a link points at: percent-decoded, a leading
 // `user-content-` dropped, matched against the raw heading ids. null when
 // there is none.
-export function headingForFragment(text, frag) {
+export function headingForFragment(text, frag, opts) {
   let id = String(frag ?? '');
   try {
     id = decodeURIComponent(id);
@@ -127,5 +132,5 @@ export function headingForFragment(text, frag) {
   }
   id = id.replace(/^user-content-/, '');
   if (!id) return null;
-  return extractHeadings(text).find((h) => h.id === id) || null;
+  return extractHeadings(text, opts).find((h) => h.id === id) || null;
 }

@@ -22,8 +22,10 @@ import { createDraftScheduler, restorePlan, restoreDecision } from './drafts.js'
 import { createSettings, zoomStep } from './settings.js';
 import { createAutosave } from './autosave.js';
 import { openMenu, closeMenu } from './menu.js';
+import { renderEnhancements } from './diagrams.js';
+import { effectiveTheme } from './theme.js';
 
-const renderMarkdown = createRenderer(window);
+const renderMarkdown = createRenderer(window, { math: true });
 const $ = (id) => document.getElementById(id);
 const tabbar = $('tabbar');
 const toolbar = $('toolbar');
@@ -247,13 +249,17 @@ function syncAppearance() {
 }
 settings.onChange(syncAppearance);
 
-// The theme actually showing: 'light' | 'dark' (for Mermaid and anything else
-// that can't read the CSS variables).
-export function effectiveTheme() {
-  const forced = document.documentElement.dataset.theme;
-  if (forced === 'light' || forced === 'dark') return forced;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+// Diagrams follow the theme: redraw them when the effective theme changes
+// (the setting, or the system theme while following it).
+let drawnTheme = effectiveTheme();
+function syncDiagramTheme() {
+  const theme = effectiveTheme();
+  if (theme === drawnTheme) return;
+  drawnTheme = theme;
+  if (doc.querySelector('.diagram')) enhanceDoc();
 }
+settings.onChange(syncDiagramTheme);
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncDiagramTheme);
 
 function zoomBy(dir) {
   settings.update({ zoom: zoomStep(settings.get().zoom, dir) });
@@ -1280,7 +1286,7 @@ function openSearchResult(path, line, match, indexInLine = 0) {
 
 // `file.md#section`: after the open settles, bring the heading into view.
 function scrollToFragment(tab, frag) {
-  const heading = headingForFragment(tab.text, frag);
+  const heading = headingForFragment(tab.text, frag, { math: true });
   if (!heading) return; // unknown anchor: leave the scroll alone
   if (showsDoc(view)) scrollDocToId(heading.id);
   if (showsEditor(view)) {
@@ -1361,7 +1367,7 @@ function collapsedFor(id) {
 
 function computeOutline(tab) {
   const prev = outlineCache.get(tab.id);
-  const headings = extractHeadings(tab.text);
+  const headings = extractHeadings(tab.text, { math: true });
   // Indexes no longer correspond once the heading count changes.
   if (prev && prev.headings.length !== headings.length) collapsedByTab.delete(tab.id);
   const entry = { id: tab.id, text: tab.text, headings, outline: buildOutline(headings) };
@@ -1628,6 +1634,18 @@ function renderDoc(tab) {
     }
   }
   doc.replaceChildren(tpl.content);
+  enhanceDoc();
+}
+
+// Maths and diagrams, after the text is in place. Rendering them changes what
+// find can see, so it re-reads the document once they are drawn.
+function enhanceDoc() {
+  if (!doc.querySelector('.math-inline, .math-display, pre > code.language-mermaid, .diagram')) return;
+  const target = doc;
+  drawnTheme = effectiveTheme();
+  renderEnhancements(target, { theme: drawnTheme })
+    .then(() => find.refresh())
+    .catch((err) => console.warn('maths/diagram rendering failed:', err));
 }
 
 // ---- tab bar events ------------------------------------------------------

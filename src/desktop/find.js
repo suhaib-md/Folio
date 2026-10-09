@@ -44,6 +44,11 @@ const el = (doc, tag, attrs = {}, text) => {
   return e;
 };
 
+// Text that is in the DOM but not part of what the reader sees: KaTeX adds a
+// visually-hidden MathML copy of every formula, and Mermaid's SVG carries a
+// <style> element (display:inline inside SVG) full of CSS text.
+const IGNORE = '.katex-mathml, style, script';
+
 // root: an empty container (the bar is built into it); getDocEl: the element
 // holding the rendered document (may be replaced between calls).
 export function createFindBar(root, getDocEl) {
@@ -132,7 +137,7 @@ export function createFindBar(root, getDocEl) {
     let lastBlock = null;
     const walker = document.createTreeWalker(docEl, 4 /* SHOW_TEXT */);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (!n.nodeValue || !n.parentElement) continue;
+      if (!n.nodeValue || !n.parentElement || n.parentElement.closest(IGNORE)) continue;
       const i = infoOf(n.parentElement);
       if (i.hidden) continue;
       if (lastBlock && i.block !== lastBlock) text += '\n';
