@@ -312,12 +312,16 @@ mod tests {
         while let Ok(e) = rx.recv_timeout(QUIET) {
             got.push(e);
         }
-        assert_eq!(
-            got,
-            vec![WatchEvent::File {
-                path: file,
-                kind: ChangeKind::Modified
-            }]
+        // One write can straddle two debounce windows and arrive twice; the
+        // point here is that b.md never shows up.
+        let expected = WatchEvent::File {
+            path: file,
+            kind: ChangeKind::Modified,
+        };
+        assert!(!got.is_empty(), "expected an event for a.md");
+        assert!(
+            got.iter().all(|e| *e == expected),
+            "unexpected events: {got:?}"
         );
     }
 
