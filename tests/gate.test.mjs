@@ -73,3 +73,23 @@ test('queued savers wait for the gate, the rename waits only for writers past it
   await Promise.all([first, queued]);
   assert.deepEqual(order, ['wrote a', 'renamed', 'wrote b']);
 });
+
+test('re-checking closed after waking sees a hold added in between', async () => {
+  const g = createGate();
+  let open1;
+  g.hold(new Promise((r) => { open1 = r; }));
+  let open2;
+  const seen = [];
+  const save = (async () => {
+    while (g.closed) await g.wait();
+    seen.push(g.closed); // nothing may await between this check and the read
+  })();
+  open1();
+  // A second hold lands in the microtask gap before the waiter continues.
+  Promise.resolve().then(() => g.hold(new Promise((r) => { open2 = r; })));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(seen, []);
+  open2();
+  await save;
+  assert.deepEqual(seen, [false]);
+});

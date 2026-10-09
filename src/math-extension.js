@@ -37,7 +37,8 @@ const INLINE = /^\$(?![\s$])((?:\\.|[^\\$\n])+?)(?<!\s)\$(?!\d)/;
 // and a frame is never shared with another run (nested runs get their own).
 // Strings are never compared by content. The one run already in progress when
 // the wrapper is installed gets an implicit frame at the bottom of the stack;
-// every later run is wrapped, so no unwrapped run can see it.
+// every later run is wrapped, so no unwrapped run can see it. A length that
+// grows (cannot happen within a run) resets the frame as a safeguard.
 //
 // Installation: marked tries extension tokenizers at the very first iteration
 // of every run, before anything that could start a nested run (blockquote,
@@ -45,8 +46,12 @@ const INLINE = /^\$(?![\s$])((?:\\.|[^\\$\n])+?)(?<!\s)\$(?!\d)/;
 // stacksFor() first, so the wrappers always go in while the OUTERMOST run is
 // the active one, and the implicit frame is that run's. (Installing it from
 // `start` alone was unsound: the first `start` call can come from inside a
-// nested run, whose frame would then be shared with the outer run.) A length that
-// grows (cannot happen within a run) resets the frame as a safeguard.
+// nested run, whose frame would then be shared with the outer run.) Soundness
+// also requires these two tokenizers to be the first-tried extensions: marked
+// tries extensions with .some(), and later-registered ones are unshifted ahead
+// of earlier ones, so another extension registered after this one would run
+// first and could start a nested run before stacksFor() has installed the
+// wrappers.
 const lexers = new WeakMap(); // lexer -> { block: Frame[], inline: Frame[] }
 const newFrame = () => ({ len: Infinity, fromEnd: -1, known: false });
 

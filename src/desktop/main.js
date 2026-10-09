@@ -1044,7 +1044,9 @@ function save(id, { as = false } = {}) {
 }
 
 async function saveNow(id, as) {
-  await renaming.wait();
+  // Re-check after waking: the gate can close again before this continuation
+  // runs, and nothing may await between the check and reading tab.path.
+  while (renaming.closed) await renaming.wait();
   let tab = findTab(id);
   if (!tab) return false;
   let path = tab.path;

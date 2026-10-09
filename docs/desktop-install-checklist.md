@@ -77,6 +77,8 @@ Viewing
       (70% to 200%); the size is kept after relaunching.
 - [ ] A `mermaid` code block renders as a diagram; `$E=mc^2$` and a
       `$$ ... $$` block render as maths.
+- [ ] A `mermaid` block with a syntax error shows `Diagram error: <message>`
+      in place of the diagram.
 - [ ] ⋯ menu → **Export HTML…** writes a file that opens on its own in a
       browser with the network off, with diagrams, maths and images intact.
 - [ ] ⋯ menu → **Print…** shows only the document; choosing *Microsoft Print
@@ -86,6 +88,10 @@ App comfort
 
 - [ ] Open a folder and two files, quit, relaunch: the same tabs, folder and
       sidebar come back.
+- [ ] Search with no folder open shows `Open a folder to search it.`; a
+      search with no hits shows `No results`.
+- [ ] Pasting an image into an unsaved tab shows
+      `Save the file first to paste images.`
 - [ ] Sidebar right-click → **New file** creates a file and opens it in
       Edit mode; **New folder** creates a folder.
 - [ ] **Rename** of a file that is open in a tab updates the tab's name and
@@ -98,6 +104,8 @@ App comfort
 Auto-update (after the one-time setup in `docs/updater-setup.md` and a
 published `v0.3.0` release)
 
+- [ ] Before the public key is set, ⋯ → **Check for updates…** says
+      `Updates not configured`.
 - [ ] Install 0.3.0 from the published release.
 - [ ] Push a test tag `v0.3.1`, wait for CI, and publish that release.
 - [ ] Relaunch 0.3.0: within about 10 seconds a banner

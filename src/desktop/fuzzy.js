@@ -40,13 +40,14 @@ const SEPARATORS = '/\\-_. ';
 // otherwise per character so indices stay aligned.
 function lowerStr(s) {
   const l = s.toLowerCase();
-  if (l.length === s.length) return l;
+  // Word-final sigma lower-cases to U+03C2 in a whole string, U+03C3 alone.
+  if (l.length === s.length) return l.replace(/\u03c2/g, '\u03c3');
   let out = '';
   for (const ch of s) {
     const c = ch.toLowerCase();
     out += c.length === ch.length ? c : ch;
   }
-  return out;
+  return out.replace(/\u03c2/g, '\u03c3');
 }
 const isLowerCh = (ch) => ch.toLowerCase() === ch && ch.toUpperCase() !== ch;
 const isUpperCh = (ch) => ch.toUpperCase() === ch && ch.toLowerCase() !== ch;

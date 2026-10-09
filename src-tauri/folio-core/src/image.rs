@@ -61,6 +61,16 @@ pub fn read_image(path: &Path) -> Result<Vec<u8>, String> {
 /// existence check and the rename would be overwritten; the window is a few
 /// microseconds and the target name is timestamped, so it is accepted.
 pub fn write_image(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if !crate::paths::is_plain_absolute(path) {
+        return Err("not a local path".to_string());
+    }
+    let in_images = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("images"));
+    if !in_images {
+        return Err("not an images folder".to_string());
+    }
     if !is_image(path) {
         return Err("not an image file".to_string());
     }
@@ -91,10 +101,26 @@ mod tests {
     }
 
     #[test]
+    fn refuses_relative_remote_and_outside_images_folder() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(write_image(Path::new("images/a.png"), b"x").unwrap_err(), "not a local path");
+        for p in ["\\\\server\\share\\images\\a.png", "//server/share/images/a.png"] {
+            assert_eq!(write_image(Path::new(p), b"x").unwrap_err(), "not a local path", "{p}");
+        }
+        for rel in ["a.png", "pics/a.png", "images2/a.png", "images/sub/a.png"] {
+            let p = d.path().join(rel);
+            assert_eq!(write_image(&p, b"x").unwrap_err(), "not an images folder", "{rel}");
+            assert!(!p.exists());
+        }
+        assert!(!d.path().join("pics").exists());
+        write_image(&d.path().join("IMAGES").join("a.png"), b"x").unwrap();
+    }
+
+    #[test]
     fn refuses_non_image() {
         let d = tempfile::tempdir().unwrap();
         for name in ["a.txt", "a.md", "noext", "a.png.exe"] {
-            let p = d.path().join(name);
+            let p = d.path().join("images").join(name);
             assert_eq!(write_image(&p, b"x").unwrap_err(), "not an image file");
             assert!(!p.exists());
         }
@@ -137,7 +163,8 @@ mod tests {
     #[test]
     fn refuses_existing() {
         let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("a.png");
+        let p = d.path().join("images").join("a.png");
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(&p, "old").unwrap();
         assert_eq!(write_image(&p, b"new").unwrap_err(), "already exists");
         assert_eq!(fs::read_to_string(&p).unwrap(), "old");
@@ -147,7 +174,7 @@ mod tests {
     fn accepts_every_listed_extension() {
         let d = tempfile::tempdir().unwrap();
         for e in IMAGE_EXTENSIONS {
-            write_image(&d.path().join(format!("x.{e}")), b"x").unwrap();
+            write_image(&d.path().join("images").join(format!("x.{e}")), b"x").unwrap();
         }
     }
 }

@@ -116,6 +116,9 @@ installer on every push and pull request.
 
 **Releasing**
 
+0. Commit the updater public key first
+   ([docs/updater-setup.md](docs/updater-setup.md)); the release job fails
+   without it, because installs built without it can never update.
 1. Bump the version in `package.json`, `src-tauri/Cargo.toml`,
    `src-tauri/folio-core/Cargo.toml` and `src-tauri/tauri.conf.json`
    (refresh the lock files), and commit.

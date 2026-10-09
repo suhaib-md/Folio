@@ -167,3 +167,13 @@ test('5000 files rank for "note" in under 15 ms', () => {
   assert.ok(typing < budget(15), `incremental keystroke took ${typing.toFixed(1)} ms, budget ${budget(15)} ms`);
   assert.ok(best < budget(15), `rankFiles took ${best.toFixed(1)} ms, budget ${budget(15)} ms`);
 });
+
+test('final sigma folds like find.js', async () => {
+  const { fuzzyMatch } = await import('../src/desktop/fuzzy.js');
+  assert.notEqual(fuzzyMatch('ΟΔΟΣ', 'ΟΔΟΣ.md'), null);
+});
+
+test('sigma typed either way matches', () => {
+  assert.notEqual(fuzzyMatch('οδοσ', 'ΟΔΟΣ.md'), null);
+  assert.notEqual(fuzzyMatch('οδος', 'ΟΔΟΣ.md'), null);
+});

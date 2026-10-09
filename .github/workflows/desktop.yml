@@ -87,6 +87,8 @@ jobs:
         with:
           workspaces: src-tauri -> target
       - run: npm ci
+      # Fail early: without the public key, installs can never update.
+      - run: node scripts/check-updater-key.mjs
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

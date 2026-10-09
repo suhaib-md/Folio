@@ -67,3 +67,10 @@ test('release job args enable updater artifacts', () => {
 test('release job needs test and windows', () => {
   assert.match(releaseJob, /needs:\s*\[\s*test\s*,\s*windows\s*\]/);
 });
+
+test('release job checks the updater key before building', () => {
+  const check = releaseJob.indexOf('node scripts/check-updater-key.mjs');
+  const action = releaseJob.indexOf('uses: tauri-apps/tauri-action');
+  assert.ok(check > 0, 'release job runs the key check');
+  assert.ok(check < action, 'key check runs before the tauri-action step');
+});
