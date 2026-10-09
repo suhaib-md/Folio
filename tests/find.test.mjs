@@ -131,3 +131,9 @@ test('position is kept after refresh()', () => {
   bar.refresh();
   assert.equal(count.textContent, '2 of 4');
 });
+
+test('Greek final sigma folds like medial sigma', () => {
+  assert.equal(findInText('ΚΑΣΤΡΟ', 'ΚΑΣ', false).length, 1);
+  assert.equal(findInText('ΟΔΟΣ ΟΔΟΣ', 'οδοσ', false).length, 2);
+  assert.equal(findInText('ΟΔΟΣ', 'οδος', false).length, 1);
+});

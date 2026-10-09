@@ -1231,11 +1231,11 @@ window.addEventListener('keydown', (e) => {
       return;
     }
     if (e.key === 'Escape') {
-      // Not from an open editor search panel (that closes first), nor from
-      // elsewhere outside the bar and the document pane.
+      // Only from the bar or the document pane. With focus in the editor Esc
+      // belongs to CodeMirror (tooltips, search panel, cursors).
       const a = document.activeElement;
       const here = !a || a === document.body || $('find').contains(a) || content.contains(a);
-      if (here || !editorEl.querySelector('.cm-panel')) {
+      if (here && !editorEl.contains(a)) {
         e.preventDefault();
         e.stopPropagation();
         find.close();

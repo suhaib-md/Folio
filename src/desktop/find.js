@@ -8,13 +8,15 @@ export const FIND_LIMIT = 10000;
 // not exactly one UTF-16 unit are kept as they are.
 function fold(s) {
   const l = s.toLowerCase();
-  if (l.length === s.length) return l;
+  // Word-final sigma folds to \u03c2 in a whole-string lower case but to \u03c3
+  // per character: make both \u03c3 (same length).
+  if (l.length === s.length) return l.replace(/\u03c2/g, '\u03c3');
   let out = '';
   for (let i = 0; i < s.length; i++) {
     const c = s[i].toLowerCase();
     out += c.length === 1 ? c : s[i];
   }
-  return out;
+  return out.replace(/\u03c2/g, '\u03c3');
 }
 
 // All non-overlapping occurrences of `query` in `text`, in order, at most
