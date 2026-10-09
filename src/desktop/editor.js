@@ -1,6 +1,6 @@
 // CodeMirror 6 wrapper. One EditorView, one EditorState per tab id: switching
 // tabs swaps states, so each tab keeps its own undo history and selection.
-import { EditorState } from '@codemirror/state';
+import { EditorState, EditorSelection, Prec } from '@codemirror/state';
 import {
   EditorView, keymap, highlightSpecialChars, drawSelection, dropCursor,
   rectangularSelection, crosshairCursor, highlightActiveLine,
@@ -16,6 +16,7 @@ import {
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { tags as t } from '@lezer/highlight';
+import { toggleWrap, insertLink } from './format.js';
 
 // Colours come from the theme variables in src/styles.css, so light and dark
 // follow prefers-color-scheme with no editor-side switching.
@@ -116,6 +117,30 @@ const highlight = HighlightStyle.define([
   { tag: t.invalid, color: 'var(--danger-fg)' },
 ]);
 
+// Ctrl+B / Ctrl+I / Ctrl+K: one transaction each, so one undo step.
+function formatCommand(fn) {
+  return (view) => {
+    const { state } = view;
+    const r = fn(state.doc.toString(), state.selection.ranges.map((x) => ({ from: x.from, to: x.to })));
+    view.dispatch({
+      changes: r.changes,
+      selection: EditorSelection.create(
+        r.ranges.map((x) => EditorSelection.range(x.from, x.to)),
+        state.selection.mainIndex,
+      ),
+      userEvent: 'input.format',
+      scrollIntoView: true,
+    });
+    return true;
+  };
+}
+
+const formatKeymap = Prec.highest(keymap.of([
+  { key: 'Mod-b', run: formatCommand((d, r) => toggleWrap(d, r, '**')), preventDefault: true },
+  { key: 'Mod-i', run: formatCommand((d, r) => toggleWrap(d, r, '*')), preventDefault: true },
+  { key: 'Mod-k', run: formatCommand(insertLink), preventDefault: true },
+]));
+
 // codemirror's basicSetup, minus lineNumbers, foldGutter and
 // highlightActiveLineGutter (and lintKeymap: there is no linter).
 const setup = [
@@ -133,6 +158,7 @@ const setup = [
   crosshairCursor(),
   highlightActiveLine(),
   highlightSelectionMatches(),
+  formatKeymap,
   keymap.of([
     ...closeBracketsKeymap,
     ...defaultKeymap,
