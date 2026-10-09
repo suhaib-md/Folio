@@ -93,6 +93,12 @@ function build(d, container) {
   });
   caseBtn.addEventListener('click', () => r.h.onToggleCase());
   refresh.addEventListener('click', () => r.h.onRefresh());
+  // One tab stop that follows focus, so Shift+Tab returns to the row left.
+  list.addEventListener('focusin', (e) => {
+    const row = e.target.closest?.('.search-row');
+    if (!row) return;
+    for (const x of list.querySelectorAll('.search-row')) x.tabIndex = x === row ? 0 : -1;
+  });
   list.addEventListener('keydown', (e) => {
     const row = e.target.closest?.('.search-row');
     if (!row || e.ctrlKey || e.altKey || e.metaKey) return;

@@ -14,7 +14,7 @@ import { flattenTree } from './fuzzy.js';
 import { openQuickOpen } from './quickopen.js';
 import { createFindBar } from './find.js';
 import { renderOutline } from './outline-view.js';
-import { extractHeadings, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
+import { extractHeadings, headingForFragment, buildOutline, currentIndex, headingIndexForLine } from './outline.js';
 import { renderSearch, matchOrdinal } from './search.js';
 
 const renderMarkdown = createRenderer(window);
@@ -861,16 +861,22 @@ let searchVersion = 0; // bumped when what the panel shows changes
 let searchRenderedVersion = -1;
 
 function newSearch() {
-  return { query: '', matchCase: false, results: null, truncated: false, running: false, collapsed: new Set() };
+  return { query: '', matchCase: false, resultsQuery: '', resultsMatchCase: false, results: null, truncated: false, running: false, collapsed: new Set() };
 }
 
 // A different folder opened: its search starts empty.
 function resetSearch() {
   clearTimeout(searchTimer);
   searchTimer = null;
-  searchSeq += 1; // any answer still on its way is stale
+  cancelBackendSearch();
   search = newSearch();
   searchVersion += 1;
+}
+
+// A newer id with an empty query returns at once and stops a running walk.
+function cancelBackendSearch() {
+  const id = ++searchSeq; // any answer still on its way is stale
+  if (folder) backend.searchFolder(folder.path, '', false, id).catch(() => {});
 }
 
 function drawSearch() {
@@ -904,23 +910,28 @@ function scheduleSearch(now) {
 async function runSearch() {
   clearTimeout(searchTimer);
   searchTimer = null;
-  const id = ++searchSeq;
-  const seq = folderSeq;
   const { query, matchCase } = search;
   if (!folder || !query) {
+    cancelBackendSearch();
     search = { ...search, results: null, truncated: false, running: false };
     searchVersion += 1;
     if (sidebarTab === 'search') drawSearch();
     return;
   }
+  const id = ++searchSeq;
   search = { ...search, running: true };
   searchVersion += 1;
   if (sidebarTab === 'search') drawSearch();
-  const stale = () => id !== searchSeq || seq !== folderSeq;
+  // Only a newer search (or another folder, which bumps searchSeq) makes an
+  // answer stale; re-opening the same folder does not.
+  const stale = () => id !== searchSeq;
   try {
     const res = await backend.searchFolder(folder.path, query, matchCase, id);
     if (stale()) return;
-    search = { ...search, results: res.files, truncated: !!res.truncated, running: false, collapsed: new Set() };
+    search = {
+      ...search, results: res.files, resultsQuery: query, resultsMatchCase: matchCase,
+      truncated: !!res.truncated, running: false, collapsed: new Set(),
+    };
   } catch (err) {
     if (stale() || err === 'cancelled') return;
     console.warn('searchFolder failed:', err);
@@ -948,33 +959,28 @@ function openThen(path, then) {
 // document (the Nth occurrence, N = matches before its line + its place on
 // the line).
 function openSearchResult(path, line, match, indexInLine = 0) {
-  const { query, matchCase } = search;
+  // The query that produced the rows, not whatever is in the box now.
+  const query = search.resultsQuery;
+  const matchCase = search.resultsMatchCase;
   return openThen(path, (tab) => {
+    const focus = !modalOpen; // a modal is answered first: no focus theft
     if (showsEditor(view)) {
       editor.selectRange(line, match.col, match.col + (match.end - match.start));
-      editor.focus();
+      if (focus) editor.focus();
     } else {
-      find.open(query, matchOrdinal(tab.text, line, query, matchCase) + indexInLine, { matchCase });
+      find.open(query, matchOrdinal(tab.text, line, query, matchCase) + indexInLine, { matchCase, focus });
     }
   });
 }
 
 // `file.md#section`: after the open settles, bring the heading into view.
 function scrollToFragment(tab, frag) {
-  let id = frag;
-  try {
-    id = decodeURIComponent(frag);
-  } catch {
-    // keep as written
-  }
-  id = id.replace(/^user-content-/, '');
-  if (!id) return;
-  const heading = extractHeadings(tab.text).find((h) => h.id === id);
+  const heading = headingForFragment(tab.text, frag);
   if (!heading) return; // unknown anchor: leave the scroll alone
-  if (showsDoc(view)) scrollDocToId(id);
+  if (showsDoc(view)) scrollDocToId(heading.id);
   if (showsEditor(view)) {
     editor.revealLine(heading.line);
-    if (view === 'edit') editor.focus();
+    if (view === 'edit' && !modalOpen) editor.focus();
   }
 }
 

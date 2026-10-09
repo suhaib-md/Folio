@@ -114,3 +114,18 @@ export function headingIndexForLine(headings, line) {
   }
   return idx;
 }
+
+// The heading a `#fragment` of a link points at: percent-decoded, a leading
+// `user-content-` dropped, matched against the raw heading ids. null when
+// there is none.
+export function headingForFragment(text, frag) {
+  let id = String(frag ?? '');
+  try {
+    id = decodeURIComponent(id);
+  } catch {
+    // keep as written
+  }
+  id = id.replace(/^user-content-/, '');
+  if (!id) return null;
+  return extractHeadings(text).find((h) => h.id === id) || null;
+}

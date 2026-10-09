@@ -259,7 +259,8 @@ export function createFindBar(root, getDocEl) {
   closeBtn.addEventListener('click', () => close());
 
   // Show the bar. `query` (when given) replaces the text; `nth` (0-based)
-  // picks the match to land on; `opts.matchCase` (when given) sets Aa.
+  // picks the match to land on; `opts.matchCase` (when given) sets Aa;
+  // `opts.focus === false` leaves focus where it is.
   function show(query, nth, opts) {
     open = true;
     if (opts && typeof opts.matchCase === 'boolean') {
@@ -268,8 +269,10 @@ export function createFindBar(root, getDocEl) {
     }
     root.hidden = false;
     if (query !== undefined) input.value = query;
-    input.focus();
-    input.select();
+    if (!opts || opts.focus !== false) {
+      input.focus();
+      input.select();
+    }
     cache = null;
     search(nth ?? null, true);
   }

@@ -148,3 +148,11 @@ test('matchOrdinal counts earlier lines only', () => {
   assert.equal(matchOrdinal(src, 2, '', false), 0);
   assert.equal(matchOrdinal('a\r\nfoo\r\nfoo', 3, 'foo', false), 1);
 });
+
+test('roving tabindex follows focus', () => {
+  const { c } = setup();
+  renderSearch(c, st(), handlers());
+  const rows = [...c.querySelectorAll('.search-row')];
+  rows[2].focus();
+  assert.deepEqual(rows.map((r) => r.tabIndex), [-1, -1, 0, -1, -1]);
+});

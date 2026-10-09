@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { createRenderer } from '../src/render.js';
-import { extractHeadings, buildOutline, currentIndex, headingIndexForLine } from '../src/desktop/outline.js';
+import { headingForFragment, extractHeadings, buildOutline, currentIndex, headingIndexForLine } from '../src/desktop/outline.js';
 
 test('atx and setext with levels and lines', () => {
   const h = extractHeadings('# One\n\ntext\n\nTwo\n===\n\nThree\n---\n\n###### Six\n');
@@ -90,4 +90,14 @@ test('5 MB doc extracts under 1500 ms', () => {
   }
   assert.ok(h.length > 1000);
   assert.ok(ms < 1500, `took ${ms} ms`);
+});
+
+test('headingForFragment: plain, prefixed, percent-encoded, unknown', () => {
+  const md = '# Intro\n\n## Über uns\n\n## Two Words\n';
+  assert.equal(headingForFragment(md, 'two-words').line, 5);
+  assert.equal(headingForFragment(md, 'user-content-two-words').line, 5);
+  assert.equal(headingForFragment(md, '%C3%BCber-uns').line, 3);
+  assert.equal(headingForFragment(md, 'nope'), null);
+  assert.equal(headingForFragment(md, ''), null);
+  assert.equal(headingForFragment(md, '%E0%A4%A'), null); // malformed escape: as written, unknown
 });
