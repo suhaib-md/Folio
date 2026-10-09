@@ -5,7 +5,7 @@
 // Esc or a click outside closes; hovering selects, clicking picks. Focus
 // returns to where it was. While open the app is inert and the modal hooks
 // fire, so incoming file opens wait and app shortcuts are blocked.
-import { rankFiles, displayParts } from './fuzzy.js';
+import { createRanker, displayParts } from './fuzzy.js';
 import { modalOpened, modalClosed } from './modal.js';
 
 const MAX_ROWS = 50;
@@ -79,6 +79,7 @@ export function openQuickOpen({ files, recentPaths = [], onPick }) {
   dialog.append(input, list, empty);
   backdrop.append(dialog);
 
+  const rank = createRanker(files, recentPaths);
   let results = [];
   let rows = [];
   let selected = 0;
@@ -99,7 +100,7 @@ export function openQuickOpen({ files, recentPaths = [], onPick }) {
   }
 
   function render() {
-    results = rankFiles(input.value, files, recentPaths, MAX_ROWS);
+    results = rank(input.value, MAX_ROWS);
     list.textContent = '';
     rows = results.map((item, i) => {
       const li = d.createElement('li');
@@ -180,6 +181,7 @@ export function openQuickOpen({ files, recentPaths = [], onPick }) {
   }
 
   let closed = false;
+  let opened = false;
   function close() {
     if (closed) return;
     closed = true;
@@ -189,7 +191,7 @@ export function openQuickOpen({ files, recentPaths = [], onPick }) {
     if (previous && previous.isConnected && typeof previous.focus === 'function') {
       previous.focus({ preventScroll: true });
     }
-    modalClosed();
+    if (opened) modalClosed();
   }
 
   input.addEventListener('input', render);
@@ -197,11 +199,18 @@ export function openQuickOpen({ files, recentPaths = [], onPick }) {
   backdrop.addEventListener('mousedown', onMouseDown);
   dialog.addEventListener('focusout', onFocusOut);
 
-  modalOpened();
-  if (app) app.inert = true;
-  d.body.append(backdrop);
+  // Build everything first: if rendering throws, nothing global has changed.
   render();
-  input.focus();
   active = { close };
+  try {
+    modalOpened();
+    opened = true;
+    if (app) app.inert = true;
+    d.body.append(backdrop);
+    input.focus();
+  } catch (err) {
+    close();
+    throw err;
+  }
   return active;
 }

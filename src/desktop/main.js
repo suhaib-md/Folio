@@ -195,12 +195,14 @@ const isNotAFolder = (err) => errorText(err) === 'not a folder';
 // While a modal is open, incoming opens wait and run when it closes. Opens
 // run one at a time so order is kept and duplicates focus.
 let modalOpen = false;
+let modalDepth = 0; // open modals; overlapping ones can't clear each other's flag
 const pending = []; // jobs: { path, run() }
 let chain = Promise.resolve();
 
 export function setModalOpen(open) {
-  modalOpen = open;
-  if (!open && pending.length) enqueue(pending.splice(0));
+  modalDepth = open ? modalDepth + 1 : Math.max(0, modalDepth - 1);
+  modalOpen = modalDepth > 0;
+  if (!modalOpen && pending.length) enqueue(pending.splice(0));
 }
 
 function enqueue(jobs) {

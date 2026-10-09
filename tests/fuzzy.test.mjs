@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fuzzyMatch, rankFiles, flattenTree, displayParts } from '../src/desktop/fuzzy.js';
+import { fuzzyMatch, rankFiles, createRanker, flattenTree, displayParts } from '../src/desktop/fuzzy.js';
 
 const f = (rel, path = '/r/' + rel) => ({ path, rel, name: rel.split(/[\\/]/).pop() });
 
@@ -119,4 +119,54 @@ test('displayParts splits folder and name highlights', () => {
   // recent mode: rel is the parent folder
   const r = { path: '/a/b/c.md', rel: '/a/b', name: 'c.md' };
   assert.deepEqual(displayParts(r, [1], false), { folder: '/a/b', folderPositions: [1], namePositions: [] });
+});
+
+test('a space in the query matches any separator', () => {
+  for (const name of ['todo-list.md', 'todo_list.md', 'todo.list.md', 'Todo List.md']) {
+    assert.ok(fuzzyMatch('todo list', name), name);
+  }
+  assert.ok(fuzzyMatch('notes todo', 'notes/todo.md'));
+  assert.ok(fuzzyMatch('notes todo', 'notes\\todo.md'));
+  assert.equal(fuzzyMatch('todo list', 'todolist.md'), null);
+  assert.equal(rankFiles('todo list', [f('todo-list.md')], [])[0].inName, true);
+});
+
+test('extending a query gives the same result as a fresh ranking', () => {
+  const files = Array.from({ length: 300 }, (_, i) => f(`dir${i % 7}/note-${i}-${'abc'[i % 3]}.md`));
+  const rank = createRanker(files, ['/r/dir1/note-1-b.md']);
+  for (const q of ['n', 'no', 'not', 'note', 'note 1', 'note 12', 'no', 'x']) {
+    assert.deepEqual(rank(q), rankFiles(q, files, ['/r/dir1/note-1-b.md']), q);
+  }
+});
+
+test('5000 files rank for "note" in under 15 ms', () => {
+  const dirs = ['Projects', 'Notes', 'Archive 2024', 'Work\\Meetings', 'Personal\\Journal', 'Ideas'];
+  const files = Array.from({ length: 5000 }, (_, i) => {
+    const name = `${['meeting', 'note', 'draft', 'todo List', 'Research', 'plan'][i % 6]}-${i}.md`;
+    const rel = `${dirs[i % dirs.length]}\\sub${i % 40}\\${name}`;
+    return { path: `C:\\Users\\Muhammed suhaib\\Documents\\${rel}`, rel, name };
+  });
+  const recent = files.slice(0, 20).map((x) => x.path);
+  rankFiles('note', files, recent); // warm-up
+  const rank = createRanker(files, recent);
+  rank('note');
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const t = performance.now();
+    rankFiles('note', files, recent);
+    best = Math.min(best, performance.now() - t);
+  }
+  // Also the typing path: a ranker prepared once, then queries extending.
+  let typing = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const r = createRanker(files, recent);
+    r('n');
+    r('no');
+    r('not');
+    const t = performance.now();
+    r('note');
+    typing = Math.min(typing, performance.now() - t);
+  }
+  assert.ok(typing < 15, `incremental keystroke took ${typing.toFixed(1)} ms`);
+  assert.ok(best < 15, `rankFiles took ${best.toFixed(1)} ms`);
 });
