@@ -99,6 +99,7 @@ jobs:
           releaseName: 'Folio ${{ github.ref_name }}'
           releaseDraft: true
           includeUpdaterJson: true
-          # Only releases sign; normal builds have no key, so the setting is
-          # not in tauri.conf.json.
-          args: --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          # Only releases sign; normal builds have no key, so the setting
+          # lives in this extra config file, not in tauri.conf.json. The path
+          # is relative to the repo root (tauri-action's projectPath).
+          args: --config src-tauri/tauri.release.conf.json

@@ -55,7 +55,9 @@ test('updater artifacts are off in the file (non-tag builds have no signing key)
 });
 
 test('release job args enable updater artifacts', () => {
-  assert.match(releaseJob, /createUpdaterArtifacts/);
+  assert.match(releaseJob, /^\s*args:\s*--config src-tauri\/tauri\.release\.conf\.json\s*$/m);
+  const extra = JSON.parse(readFileSync(new URL('../src-tauri/tauri.release.conf.json', import.meta.url), 'utf8'));
+  assert.deepEqual(extra, { bundle: { createUpdaterArtifacts: true } });
   assert.match(releaseJob, /includeUpdaterJson:\s*true/);
   assert.match(releaseJob, /TAURI_SIGNING_PRIVATE_KEY:\s*\$\{\{\s*secrets\.TAURI_SIGNING_PRIVATE_KEY\s*\}\}/);
   assert.match(releaseJob, /TAURI_SIGNING_PRIVATE_KEY_PASSWORD:\s*\$\{\{\s*secrets\.TAURI_SIGNING_PRIVATE_KEY_PASSWORD\s*\}\}/);

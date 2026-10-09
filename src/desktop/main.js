@@ -226,6 +226,14 @@ const updater = createUpdater({
   backend,
   appInfo: () => backend.appInfo(),
   runCloseFlow: () => prepareToExit(),
+  // The update failed after the close prompts: the app stays open, so it
+  // saves its session and autosaves again.
+  abortExit: () => {
+    sessionFrozen = false;
+    syncSession();
+    syncAutosave();
+  },
+  busyReason: () => (modalOpen ? 'Close the open dialog first.' : null),
   showBanner: (text, { actions } = {}) => showBanner(text, 'info', actions),
   hideBanner: () => hideBanner(),
   notify: (text, kind) => showBanner(text, kind === 'error' ? 'error' : 'info'),
@@ -414,7 +422,12 @@ function hideBanner() {
   bannerActions.hidden = true;
 }
 
-$('app-banner-close').addEventListener('click', hideBanner);
+// Dismissing a plain message brings a pending update offer back.
+$('app-banner-close').addEventListener('click', () => {
+  const wasOffer = !bannerActions.hidden;
+  hideBanner();
+  if (!wasOffer) updater.bannerDismissed();
+});
 $('tab-banner-close').addEventListener('click', () => {
   const id = state.activeId;
   if (id) commit((s) => T.setBanner(s, id, null));

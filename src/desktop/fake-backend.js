@@ -258,15 +258,23 @@ export async function appInfo() {
   return { version: '0.3.0-dev', updaterConfigured: !!updateVersion };
 }
 
+// ?updateFail=download|install makes that step reject.
+const updateFail = params.get('updateFail') || '';
+
 export async function checkUpdate() {
   if (!updateVersion) return null;
   return {
     version: updateVersion,
-    install: async (onProgress) => {
+    download: async (onProgress) => {
       for (const f of [0.1, 0.42, 1]) {
         await new Promise((r) => setTimeout(r, 400));
         onProgress(f);
       }
+      if (updateFail === 'download') throw 'simulated download failure';
+    },
+    install: async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      if (updateFail === 'install') throw 'simulated install failure';
     },
   };
 }

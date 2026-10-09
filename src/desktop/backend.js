@@ -59,7 +59,7 @@ const real = {
     return (await save({ defaultPath: defaultName, filters: [HTML_FILTER] })) || null;
   },
   openExternal: (url) => openUrl(url),
-  // { version, install(onProgress) } or null. Only works once the updater
+  // { version, download(onProgress), install() } or null. Only works once the updater
   // plugin is registered (a public key in tauri.conf.json); callers check
   // appInfo().updaterConfigured first. onProgress gets a 0..1 fraction, or
   // null when the download size is unknown.
@@ -68,10 +68,10 @@ const real = {
     if (!update) return null;
     return {
       version: update.version,
-      install: (onProgress) => {
+      download: (onProgress) => {
         let total = 0;
         let done = 0;
-        return update.downloadAndInstall((e) => {
+        return update.download((e) => {
           if (e.event === 'Started') total = e.data.contentLength || 0;
           else if (e.event === 'Progress') {
             done += e.data.chunkLength;
@@ -79,6 +79,7 @@ const real = {
           }
         });
       },
+      install: () => update.install(),
     };
   },
   relaunch: () => relaunchApp(),
