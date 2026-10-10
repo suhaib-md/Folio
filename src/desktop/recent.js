@@ -2,7 +2,7 @@
 // Pure with respect to app state: data and a callback in, DOM out.
 import { basename, dirname } from './paths.js';
 
-export function renderRecent(container, recent, { onOpen }) {
+export function renderRecent(container, recent, { onOpen, maxFiles = Infinity, maxFolders = Infinity }) {
   const d = container.ownerDocument;
   const sections = [];
   const add = (paths, kind, heading) => {
@@ -35,7 +35,7 @@ export function renderRecent(container, recent, { onOpen }) {
     section.append(h, ul);
     sections.push(section);
   };
-  add(recent?.files, 'file', 'Recent files');
-  add(recent?.folders, 'folder', 'Recent folders');
+  add(recent?.files?.slice(0, maxFiles), 'file', 'Recent files');
+  add(recent?.folders?.slice(0, maxFolders), 'folder', 'Recent folders');
   container.replaceChildren(...sections);
 }

@@ -47,8 +47,13 @@ it, edit it, and keep a folder sidebar.
 - Word count and reading time
 - Crash recovery: unsaved edits are kept as drafts and offered back on the
   next launch
-- Optional autosave (⋯ menu)
+- Optional autosave (status bar or Settings)
 - Zoom (Ctrl+= / Ctrl+- / Ctrl+0) and a System / Light / Dark theme
+- A serif (Newsreader) or sans (Geist) reading font, in Settings (Ctrl+,)
+- A command palette: Ctrl+P finds files, typing `>` (or Ctrl+Shift+P) runs
+  any command
+- A status bar with word count, cursor position, line endings, encoding,
+  zoom and theme
 - Mermaid diagrams and KaTeX maths (`$…$`, `$$…$$`), bundled, offline
 - Export to a standalone HTML file, and print (or save as PDF)
 - Session restore: reopens your tabs, folder and sidebar
@@ -72,7 +77,9 @@ it, edit it, and keep a folder sidebar.
 | Ctrl+Shift+B | Sidebar |
 | Ctrl+Shift+L | Outline |
 | Ctrl+Shift+F | Search folder |
-| Ctrl+P | Quick open |
+| Ctrl+P | Go to file (type `>` for commands) |
+| Ctrl+Shift+P | Run a command |
+| Ctrl+, | Settings |
 | Ctrl+F | Find |
 | Ctrl+B | Bold (editor) |
 | Ctrl+I | Italic (editor) |
@@ -80,12 +87,12 @@ it, edit it, and keep a folder sidebar.
 | Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / reset |
 | F5 / Ctrl+R | Do nothing (so a reload can't lose edits) |
 
-Print and Export HTML are in the ⋯ menu.
+Print and Export HTML are in the ⋯ menu and the command palette.
 
 **Updates**
 
 Folio checks GitHub Releases for a newer version 10 seconds after it starts.
-If there is one, a banner offers **Install and restart** (it downloads and
+If there is one, the status bar offers **Install and restart** (it downloads and
 verifies the package first, then asks about unsaved work). You can also use
 **Check for updates…** in the ⋯ menu. Update packages are signed; the
 one-time key setup is in [docs/updater-setup.md](docs/updater-setup.md).
@@ -146,11 +153,13 @@ installer on every push and pull request.
 - `src/main.js`: web viewer: open button, drag-and-drop, anchor links
 - `src/index.html`, `src/styles.css`: page template and styles
 - `src/desktop/`: desktop app UI: tabs and editor; sidebar (files, outline,
-  search); find, quick open, formatting, paste image; crash-recovery drafts,
+  search); find, command palette, settings dialog, formatting, paste image; crash-recovery drafts,
   autosave, session and settings; theme, zoom, diagrams, maths, export;
   updater; `backend.js` is the only bridge to Tauri (`fake-backend.js` is
   the in-browser stand-in used by tests)
 - `src-tauri/`: Tauri 2 app (Rust) and `folio-core` (file I/O, tree, recent,
   folder search, file operations, drafts, settings)
 - `build.mjs`: bundles the web viewer into one file (`--desktop`: the app UI)
+- `src/desktop/fonts/`: Geist, Geist Mono and Newsreader, bundled with the
+  app (SIL Open Font License, texts alongside)
 - `docs/superpowers/`: design spec and implementation plan

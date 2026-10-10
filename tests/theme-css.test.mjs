@@ -21,7 +21,8 @@ test('forced-dark variables (app.css) equal the system-dark variables (styles.cs
 });
 
 test('every variable the dark blocks set has a light default', () => {
-  const light = { ...vars(styles, ':root {'), ...vars(app, ':root {') };
+  // All tokens live in styles.css; app.css only repeats the dark set.
+  const light = vars(styles, ':root {');
   for (const name of Object.keys(vars(app, ':root[data-theme="dark"]'))) assert.ok(name in light, name);
 });
 

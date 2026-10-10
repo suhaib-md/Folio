@@ -51,9 +51,9 @@ export function katexFontUrls(css) {
 // images, plus https: images (as the app's own CSP allows). No scripts.
 export const CSP = "default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; font-src data:";
 
-const EXPORT_CSS = 'html,body{height:auto}body{overflow:auto}.markdown.export{font-size:1rem}';
+const EXPORT_CSS = 'html,body{height:auto}body{overflow:auto}';
 
-export function buildExportHtml({ title, bodyHtml, css, theme, images }) {
+export function buildExportHtml({ title, bodyHtml, css, theme, images, docFont = 'serif' }) {
   const p = getPurify();
   const frag = p.sanitize(String(bodyHtml), {
     USE_PROFILES: { html: true, svg: true, svgFilters: true, mathMl: true },
@@ -79,7 +79,7 @@ export function buildExportHtml({ title, bodyHtml, css, theme, images }) {
   const safeCss = String(css).replace(/<\/(style)/gi, '<\\/$1');
   const t = theme === 'dark' ? 'dark' : 'light';
   return `<!doctype html>
-<html lang="en" data-theme="${t}">
+<html lang="en" data-theme="${t}"${docFont === 'sans' ? ' data-docfont="sans"' : ''}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -127,8 +127,18 @@ export async function collectImages(root, readBase64, lookup, budget = EMBED_BUD
 // CSS for the export: the app stylesheet plus, when the document has maths,
 // KaTeX's with its woff2 fonts embedded. `fetchText(url)` / `fetchBase64(url)`
 // are injected (the app passes fetch-based ones).
-export async function collectCss(root, { fetchText, fetchBase64 }) {
+export async function collectCss(root, { fetchText, fetchBase64, docFont = 'serif' }) {
   let css = await fetchText('./app.css');
+  // The app's own fonts, embedded only where the document uses them (the
+  // rest fall back to system fonts, which the CSP keeps from loading).
+  const wanted = (u) => (docFont === 'sans' ? /^fonts\/Geist-/.test(u) : /^fonts\/Newsreader-/.test(u))
+    || (/^fonts\/GeistMono-/.test(u) && !!root.querySelector('pre, code'))
+    || (/^fonts\/Geist-/.test(u) && !!root.querySelector('table'));
+  const appFonts = new Map();
+  await Promise.all(katexFontUrls(css).filter(wanted).map(async (u) => {
+    try { appFonts.set(u, `data:font/woff2;base64,${await fetchBase64(`./${u}`)}`); } catch { /* falls back */ }
+  }));
+  if (appFonts.size) css = rewriteKatexCss(css, appFonts);
   if (root.querySelector('.katex')) {
     try {
       const katex = await fetchText('./katex/katex.min.css');

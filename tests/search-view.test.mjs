@@ -34,8 +34,9 @@ test('groups by file with counts and bold match', () => {
   const rows = [...c.querySelectorAll('.search-match')];
   assert.equal(rows.length, 3);
   assert.equal(rows[0].querySelector('mark').textContent, 'foo');
-  assert.equal(rows[0].textContent, '1: hello foo');
-  assert.equal(c.querySelector('.search-status').textContent, '3 results in 2 files');
+  assert.equal(rows[0].querySelector('.search-line').textContent, '1');
+  assert.equal(rows[0].textContent, '1hello foo');
+  assert.equal(c.querySelector('.search-status').textContent, '3 matches in 2 files');
 });
 
 test('match text is never parsed as HTML', () => {
@@ -81,13 +82,12 @@ test('click calls onPick with path, line, match', () => {
   assert.equal(picks[0][2], results[0].matches[1]);
 });
 
-test('query input, Enter, toggle and refresh', () => {
+test('query input, Enter and toggle', () => {
   const { c, window } = setup();
   const log = [];
   renderSearch(c, st({ matchCase: true }), handlers({
     onQuery: (q, now) => log.push(['q', q, !!now]),
     onToggleCase: () => log.push('case'),
-    onRefresh: () => log.push('refresh'),
   }));
   const input = c.querySelector('input');
   assert.equal(input.getAttribute('aria-label'), 'Search folder');
@@ -99,9 +99,8 @@ test('query input, Enter, toggle and refresh', () => {
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   aa.click();
-  c.querySelector('.search-refresh').click();
-  assert.deepEqual(log, [['q', 'bar', false], ['q', 'bar', true], 'case', 'refresh']);
-  assert.equal(c.querySelector('.search-refresh').title, 'Search again');
+  assert.deepEqual(log, [['q', 'bar', false], ['q', 'bar', true], 'case']);
+  assert.equal(c.querySelector('.search-refresh'), null);
 });
 
 test('re-render keeps the input element (focus survives)', () => {

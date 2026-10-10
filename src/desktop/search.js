@@ -3,7 +3,7 @@
 // reports clicks; the caller owns the state and re-renders. File content only
 // ever reaches the DOM as text nodes.
 //
-// The query box, Aa and refresh buttons are built once per container and
+// The query box and its Aa toggle are built once per container and
 // kept across renders (typing must not lose focus); the status line and
 // results list are rebuilt. Result rows (file rows and match rows) are
 // buttons in one roving-tabindex list: Up/Down move, Enter/click opens,
@@ -16,6 +16,8 @@ export const NO_FOLDER = 'Open a folder to search it.';
 // How many characters before the match a snippet keeps (the rest is elided
 // with a leading ellipsis so the match stays visible in a narrow sidebar).
 const LEAD = 24;
+
+const SEARCH_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.3"/></svg>';
 
 const roots = new WeakMap(); // container -> { input, caseBtn, status, notice, list, h, s }
 
@@ -46,6 +48,9 @@ function build(d, container) {
   root.className = 'search-root';
   const box = d.createElement('div');
   box.className = 'search-box';
+  const field = d.createElement('div');
+  field.className = 'search-field';
+  field.innerHTML = SEARCH_ICON;
   const input = d.createElement('input');
   input.type = 'text';
   input.className = 'search-input';
@@ -58,13 +63,8 @@ function build(d, container) {
   caseBtn.className = 'search-btn search-case';
   caseBtn.title = 'Match case';
   caseBtn.textContent = 'Aa';
-  const refresh = d.createElement('button');
-  refresh.type = 'button';
-  refresh.className = 'search-btn search-refresh';
-  refresh.title = 'Search again';
-  refresh.setAttribute('aria-label', 'Search again');
-  refresh.textContent = '↻';
-  box.append(input, caseBtn, refresh);
+  field.append(input, caseBtn);
+  box.append(field);
   const status = d.createElement('div');
   status.className = 'search-status';
   status.setAttribute('role', 'status');
@@ -92,7 +92,6 @@ function build(d, container) {
     }
   });
   caseBtn.addEventListener('click', () => r.h.onToggleCase());
-  refresh.addEventListener('click', () => r.h.onRefresh());
   // One tab stop that follows focus, so Shift+Tab returns to the row left.
   list.addEventListener('focusin', (e) => {
     const row = e.target.closest?.('.search-row');
@@ -123,7 +122,7 @@ function build(d, container) {
 
 // state: { folder, query, matchCase, results|null, truncated, running,
 // collapsed?: Set of file paths }
-// handlers: { onQuery(q, now), onToggleCase(), onRefresh(), onPick(path, line,
+// handlers: { onQuery(q, now), onToggleCase(), onPick(path, line,
 // match, indexInLine), onToggleFile?(path) }
 export function renderSearch(container, state, handlers) {
   const d = container.ownerDocument;
@@ -150,7 +149,7 @@ export function renderSearch(container, state, handlers) {
   if (state.running) status.textContent = 'Searching…';
   else if (!state.results || !state.query) status.textContent = '';
   else if (!files.length) status.textContent = 'No results';
-  else status.textContent = `${total} ${total === 1 ? 'result' : 'results'} in ${files.length} ${files.length === 1 ? 'file' : 'files'}`;
+  else status.textContent = `${total} ${total === 1 ? 'match' : 'matches'} in ${files.length} ${files.length === 1 ? 'file' : 'files'}`;
   notice.textContent = state.truncated && !state.running ? `Showing the first ${total} matches` : '';
   notice.hidden = !notice.textContent;
 
@@ -168,9 +167,6 @@ export function renderSearch(container, state, handlers) {
     row.dataset.path = file.path;
     row.dataset.key = `f|${file.path}`;
     row.title = file.path;
-    const tw = d.createElement('span');
-    tw.className = 'search-twisty';
-    tw.setAttribute('aria-hidden', 'true');
     const name = d.createElement('span');
     name.className = 'search-name';
     name.textContent = basename(file.path);
@@ -180,7 +176,7 @@ export function renderSearch(container, state, handlers) {
     const count = d.createElement('span');
     count.className = 'search-count';
     count.textContent = String(file.matches.length);
-    row.append(tw, name, dir, count);
+    row.append(name, dir, count);
     row.addEventListener('click', () => r.h.onToggleFile?.(file.path));
     frag.append(row);
     if (!open) continue;
@@ -196,7 +192,7 @@ export function renderSearch(container, state, handlers) {
       mr.title = `${basename(file.path)}:${m.line}`;
       const num = d.createElement('span');
       num.className = 'search-line';
-      num.textContent = `${m.line}: `;
+      num.textContent = String(m.line);
       const snip = d.createElement('span');
       snip.className = 'search-snippet';
       snip.append(...snippet(d, m));

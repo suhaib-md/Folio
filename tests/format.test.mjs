@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toggleWrap, insertLink } from '../src/desktop/format.js';
+import { toggleWrap, insertLink, cycleHeading, toggleTask } from '../src/desktop/format.js';
 
 // Applies a result to doc; returns [text, selectedTexts].
 function apply(doc, r) {
@@ -110,4 +110,22 @@ test('touching ranges stay well formed', () => {
 
 test('"****" fully selected is wrapped, not unwrapped', () => {
   assert.deepEqual(apply('****', toggleWrap('****', [{ from: 0, to: 4 }], '**')), ['********', ['****']]);
+});
+
+test('cycleHeading: none -> # -> ## ... ###### -> none, following the first line', () => {
+  const run = (doc, from = 0, to = from) => apply(doc, cycleHeading(doc, [{ from, to }]))[0];
+  assert.equal(run('hello', 2), '# hello');
+  assert.equal(run('# hello'), '## hello');
+  assert.equal(run('###### hello'), 'hello');
+  // Several lines take the first line's next level.
+  assert.equal(run('a\n## b', 0, 4), '# a\n# b');
+});
+
+test('toggleTask: adds, converts bullets, removes from an all-task selection', () => {
+  const run = (doc, from = 0, to = from) => apply(doc, toggleTask(doc, [{ from, to }]))[0];
+  assert.equal(run(''), '- [ ] ');
+  assert.equal(run('buy milk'), '- [ ] buy milk');
+  assert.equal(run('  - buy milk'), '  - [ ] buy milk');
+  assert.equal(run('- [ ] a\n- [x] b', 0, 13), 'a\nb');
+  assert.equal(run('- [ ] a\nplain', 0, 13), '- [ ] a\n- [ ] plain');
 });

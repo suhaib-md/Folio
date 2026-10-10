@@ -86,7 +86,7 @@ export function createUpdater({
 
   function offer(update) {
     pending = update;
-    showBanner(`Folio ${update.version} is available.`, {
+    showBanner(`Folio ${update.version} is ready`, {
       actions: [
         { label: 'Install and restart', primary: true, onSelect: () => install(update) },
         {

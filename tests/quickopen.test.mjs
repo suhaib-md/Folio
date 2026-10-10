@@ -97,3 +97,49 @@ test('a throwing render leaves nothing inert or flagged', () => {
   openQuickOpen({ files, recentPaths: [], onPick() {} }).close();
   assert.equal(depth, 0);
 });
+
+test('typing > switches to commands; Backspace on empty goes back', () => {
+  const ran = [];
+  const commands = [
+    { label: 'Toggle sidebar', group: 'View', key: 'Ctrl+Shift+B', run: () => ran.push('sidebar') },
+    { label: 'Export HTML…', group: 'File', run: () => ran.push('export') },
+  ];
+  openQuickOpen({ files, recentPaths: [], onPick() { assert.fail('no file pick'); }, commands });
+  const input = document.querySelector('[role=combobox]');
+  assert.equal(document.querySelector('.quickopen-prefix').hidden, true);
+  input.value = '>';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  assert.equal(input.value, '');
+  assert.equal(document.querySelector('.quickopen-prefix').hidden, false);
+  assert.equal(document.querySelector('.quickopen-group').textContent, 'Commands');
+  assert.equal(document.querySelectorAll('[role=option]').length, 2);
+  assert.equal(document.querySelector('.quickopen-key').textContent, 'Ctrl+Shift+B');
+  key(input, 'Backspace');
+  assert.equal(document.querySelector('.quickopen-group').textContent, 'Files');
+  key(input, 'Escape');
+  assert.deepEqual(ran, []);
+});
+
+test('startInCommands filters and runs a command after closing', () => {
+  const ran = [];
+  const commands = [
+    { label: 'Toggle sidebar', group: 'View', run: () => ran.push(['sidebar', depth]) },
+    { label: 'Export HTML…', group: 'File', run: () => ran.push(['export', depth]) },
+  ];
+  openQuickOpen({ files, recentPaths: [], onPick() {}, commands, startInCommands: true });
+  const input = document.querySelector('[role=combobox]');
+  input.value = 'expo';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  assert.equal(document.querySelectorAll('[role=option]').length, 1);
+  key(input, 'Enter');
+  assert.deepEqual(ran, [['export', 0]]);
+});
+
+test('Ctrl+Enter picks a file for a new tab', () => {
+  const picked = [];
+  openQuickOpen({ files, recentPaths: ['/r/a.md'], onPick: (p, o) => picked.push([p, o.newTab]) });
+  document.querySelector('[role=combobox]').dispatchEvent(
+    new dom.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }),
+  );
+  assert.deepEqual(picked, [['/r/a.md', true]]);
+});

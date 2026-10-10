@@ -114,3 +114,33 @@ test('embed budget: images past it stay links', async () => {
   assert.deepEqual([...images.keys()], ['a.png', 'b.png']);
   assert.equal(d.getElementById('c').getAttribute('src'), 'c.png');
 });
+
+test('collectCss embeds the reading font and only the app fonts the document uses', async () => {
+  const { collectCss } = await import('../src/desktop/exporter.js');
+  const app = [
+    '@font-face{font-family:"Geist";src:url(fonts/Geist-Variable.woff2) format("woff2")}',
+    '@font-face{font-family:"Geist Mono";src:url(fonts/GeistMono-Variable.woff2) format("woff2")}',
+    '@font-face{font-family:"Newsreader";src:url(fonts/Newsreader-latin-normal.woff2) format("woff2")}',
+  ].join('\n');
+  const fetched = [];
+  const io = {
+    fetchText: async () => app,
+    fetchBase64: async (u) => { fetched.push(u); return 'AAAA'; },
+  };
+  const root = document.createElement('div');
+  root.innerHTML = '<p>Just text</p>';
+  let css = await collectCss(root, io);
+  assert.deepEqual(fetched, ['./fonts/Newsreader-latin-normal.woff2']);
+  assert.match(css, /Newsreader"[^}]*url\(data:font\/woff2;base64,AAAA\)/);
+  assert.match(css, /url\(fonts\/Geist-Variable\.woff2\)/);
+  fetched.length = 0;
+  root.innerHTML = '<pre><code>x</code></pre>';
+  css = await collectCss(root, { ...io, docFont: 'sans' });
+  assert.deepEqual(fetched.sort(), ['./fonts/Geist-Variable.woff2', './fonts/GeistMono-Variable.woff2']);
+});
+
+test('buildExportHtml marks a sans reading font', async () => {
+  const { buildExportHtml } = await import('../src/desktop/exporter.js');
+  const html = buildExportHtml({ title: 't', bodyHtml: '<p>x</p>', css: '', theme: 'light', images: new Map(), docFont: 'sans' });
+  assert.match(html, /<html lang="en" data-theme="light" data-docfont="sans">/);
+});

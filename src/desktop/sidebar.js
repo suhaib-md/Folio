@@ -17,6 +17,7 @@
 // first child of `parent` (the caller expands it); a rename's replaces the
 // row at `path`. Enter -> onCommit(name), Esc -> onCancel(), blur ->
 // onCommit(name, { fromBlur: true }) once. A re-render keeps what was typed.
+// `dirtyPaths` (normalizePath() keys) marks files with unsaved edits.
 import { normalizePath } from './tabs.js';
 
 export const TRUNCATED_NOTICE = 'Folder too large — showing first 5000 items';
@@ -29,7 +30,7 @@ const NEW_FILE_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidd
 const NEW_FOLDER_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1.5 3.5h4.5l1.5 1.5h7v8.5h-13z M8 7.5v4 M6 9.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
 
 export function renderTree(container, root, {
-  activePath, expanded, truncated, onOpen, onToggle,
+  activePath, expanded, truncated, onOpen, onToggle, dirtyPaths = null,
   onContextMenu, onRename, onDelete, onNew, editing = null, onCommit, onCancel,
 }) {
   const d = container.ownerDocument;
@@ -219,6 +220,13 @@ export function renderTree(container, root, {
           row.setAttribute('aria-current', 'page');
         }
         row.append(label);
+        if (dirtyPaths?.has(normalizePath(node.path))) {
+          const dot = d.createElement('span');
+          dot.className = 'tree-dirty';
+          dot.textContent = '●';
+          dot.setAttribute('aria-label', 'unsaved changes');
+          row.append(dot);
+        }
         row.addEventListener('click', () => onOpen(node.path));
         li.append(row);
         addMore(li, node, row);

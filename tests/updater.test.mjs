@@ -62,7 +62,7 @@ test('startup check once after 10 s', async () => {
   await h.timers[0].fn();
   assert.equal(h.backend.checks, 1);
   const b = lastBanner(h);
-  assert.equal(b.text, 'Folio 0.3.1 is available.');
+  assert.equal(b.text, 'Folio 0.3.1 is ready');
   assert.deepEqual(b.actions.map((a) => a.label), ['Install and restart', 'Later']);
 });
 
@@ -118,7 +118,7 @@ test('not configured message', async () => {
 test('checkNow shows the banner when an update exists', async () => {
   const h = setup({ update: '0.3.1' });
   await h.u.checkNow();
-  assert.equal(lastBanner(h).text, 'Folio 0.3.1 is available.');
+  assert.equal(lastBanner(h).text, 'Folio 0.3.1 is ready');
 });
 
 test('Install and restart: download, close flow, install, relaunch', async () => {
@@ -135,7 +135,7 @@ test('close flow cancel aborts install without abortExit, offer comes back', asy
   await click(lastBanner(h), 'Install and restart');
   assert.deepEqual(h.log, ['download', 'closeFlow']);
   assert.equal(h.backend.relaunched, 0);
-  assert.equal(lastBanner(h).text, 'Folio 0.3.1 is available.');
+  assert.equal(lastBanner(h).text, 'Folio 0.3.1 is ready');
   assert.equal(lastBanner(h).actions.length, 2);
   assert.equal(h.notes.length, 0);
 });
@@ -170,7 +170,7 @@ test('the offer re-shows after another message is dismissed; not after Later', a
   await h.u.checkNow();
   h.banners.length = 0;
   h.u.bannerDismissed();
-  assert.equal(lastBanner(h).text, 'Folio 0.3.1 is available.');
+  assert.equal(lastBanner(h).text, 'Folio 0.3.1 is ready');
   click(lastBanner(h), 'Later');
   h.banners.length = 0;
   h.u.bannerDismissed();

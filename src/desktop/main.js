@@ -15,6 +15,7 @@ import { validateName, withMdExtension, keepExtension, remapPath, joinPath, isIn
 import { renderRecent } from './recent.js';
 import { flattenTree } from './fuzzy.js';
 import { openQuickOpen } from './quickopen.js';
+import { openSettings } from './settings-view.js';
 import { createFindBar } from './find.js';
 import { renderOutline } from './outline-view.js';
 import { countWords, formatCount } from './wordcount.js';
@@ -25,17 +26,28 @@ import { createDraftScheduler, restorePlan, restoreDecision } from './drafts.js'
 import { createSettings, zoomStep } from './settings.js';
 import { captureSession, startupOrder, mergeSkipped, sessionShape } from './session.js';
 import { createAutosave } from './autosave.js';
-import { openMenu, closeMenu } from './menu.js';
+import { openMenu, closeMenu, isMenuOpen } from './menu.js';
 import { renderEnhancements } from './diagrams.js';
 import { effectiveTheme } from './theme.js';
 import { buildExportHtml, collectImages, collectCss } from './exporter.js';
 
 const renderMarkdown = createRenderer(window, { math: true });
 const $ = (id) => document.getElementById(id);
+const appEl = document.querySelector('.app');
 const tabbar = $('tabbar');
-const toolbar = $('toolbar');
-const filename = $('filename');
-const wordcountEl = $('wordcount');
+const docHeader = $('doc-header');
+const breadcrumb = $('breadcrumb');
+const formatBar = $('format-bar');
+const wordcountEl = $('status-words');
+const statusPos = $('status-pos');
+const statusDoc = $('status-doc');
+const statusAutosave = $('status-autosave');
+const statusEol = $('status-eol');
+const statusEncoding = $('status-encoding');
+const statusZoom = $('status-zoom');
+const statusTheme = $('status-theme');
+const updatePill = $('update-pill');
+const filesRecent = $('files-recent');
 const banner = $('app-banner');
 const bannerText = $('app-banner-text');
 const bannerActions = $('app-banner-actions');
@@ -53,7 +65,9 @@ const tabBannerRecovered = $('tab-banner-recovered');
 const sidebarEl = $('sidebar');
 const filesTree = $('files-tree');
 const filesEmpty = $('files-empty');
-const outlinePanel = $('sidebar-panel-outline');
+const outlinePanel = $('outline-list');
+const outlineTitle = $('outline-title');
+const outlineCount = $('outline-count');
 const searchPanel = $('search-panel');
 const SIDEBAR_TABS = ['files', 'outline', 'search'];
 const sidebarTabEl = (name) => $(`sidebar-tab-${name}`);
@@ -202,6 +216,7 @@ const settleDrafts = (ms) =>
 // ---- settings and autosave -------------------------------------------------
 
 const settings = createSettings(backend);
+const autosaved = new Set(); // tab ids whose last save was an autosave ("Autosaved")
 
 // Autosave: render() reconciles which dirty tabs have a 1 s timer (see
 // autosave.js). It saves through the normal save(); a failed save (banner
@@ -211,6 +226,7 @@ const autosave = createAutosave({
   blocked: () => modalOpen,
   save: async (id) => {
     const ok = await save(id);
+    if (ok) autosaved.add(id);
     // Only a real failure pauses (its banner is up); a cancelled joined
     // Save As also returns false.
     if (!ok && findTab(id)?.banner?.kind === SAVE_ERROR) commit((s) => T.setAutosavePaused(s, id, true));
@@ -234,29 +250,69 @@ const updater = createUpdater({
     syncAutosave();
   },
   busyReason: () => (modalOpen ? 'Close the open dialog first.' : null),
-  showBanner: (text, { actions } = {}) => showBanner(text, 'info', actions),
-  hideBanner: () => hideBanner(),
+  showBanner: (text, { actions } = {}) => showUpdatePill(text, actions),
+  hideBanner: () => hideUpdatePill(),
   notify: (text, kind) => showBanner(text, kind === 'error' ? 'error' : 'info'),
   setTimer: (fn, ms) => setTimeout(fn, ms),
 });
 
+// The update offer and its progress live in the status bar. An action with
+// `primary` is the filled button; any other (Later) is a quiet ×.
+function showUpdatePill(text, actions = []) {
+  const label = document.createElement('span');
+  label.textContent = text;
+  const buttons = actions.map((a) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    if (a.primary) {
+      b.textContent = a.label;
+    } else {
+      b.className = 'secondary';
+      b.textContent = '×';
+      b.title = a.label;
+      b.setAttribute('aria-label', a.label);
+    }
+    b.addEventListener('click', () => a.onSelect());
+    return b;
+  });
+  updatePill.replaceChildren(label, ...buttons);
+  updatePill.hidden = false;
+}
+
+function hideUpdatePill() {
+  updatePill.hidden = true;
+  updatePill.replaceChildren();
+}
+
 let appVersion = '';
-async function showAbout() {
+async function loadVersion() {
   try {
     appVersion = appVersion || (await backend.appInfo()).version;
   } catch (err) {
     console.warn('app_info failed:', err);
   }
-  showBanner(appVersion ? `Folio ${appVersion}` : 'Folio', 'info');
+  return appVersion;
 }
+
+// Ctrl+, (and About Folio, on its last page).
+async function showSettings(page = 'appearance') {
+  if (modalOpen) return;
+  const version = await loadVersion();
+  if (modalOpen) return;
+  closeMenu();
+  openSettings({ settings, page, version, onCheckUpdates: () => updater.checkNow() });
+}
+const showAbout = () => showSettings('about');
 
 // ---- zoom and theme ----------------------------------------------------------
 
 // Zoom scales the document and editor text through --doc-zoom (chrome stays
 // put); the theme is data-theme on <html> (absent = follow the system).
-function applyAppearance({ zoom, theme }) {
+function applyAppearance({ zoom, theme, docFont }) {
   const root = document.documentElement;
   root.style.setProperty('--doc-zoom', String(zoom / 100));
+  if (docFont === 'sans') root.dataset.docfont = 'sans';
+  else delete root.dataset.docfont;
   if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
   else delete root.dataset.theme;
   Promise.resolve(backend.setWindowTheme(theme === 'system' ? null : theme)).catch((err) =>
@@ -264,11 +320,12 @@ function applyAppearance({ zoom, theme }) {
 }
 let appliedLook = '';
 function syncAppearance() {
-  const { zoom, theme } = settings.get();
-  const key = `${zoom}/${theme}`;
+  const { zoom, theme, docFont } = settings.get();
+  const key = `${zoom}/${theme}/${docFont}`;
   if (key === appliedLook) return;
   appliedLook = key;
-  applyAppearance({ zoom, theme });
+  applyAppearance({ zoom, theme, docFont });
+  syncStatus();
   // Heading positions move with the text size.
   requestAnimationFrame(() => syncOutlineCurrent(true));
 }
@@ -306,42 +363,37 @@ function onZoomWheel(e) {
 }
 for (const el of [content, editorEl]) el.addEventListener('wheel', onZoomWheel, { passive: false });
 
-// Later tasks append their items here.
 function moreMenuItems() {
-  const { theme, zoom } = settings.get();
-  const hasDoc = !!getActiveTab();
-  const themeItem = (label, value) => ({
-    label,
-    checked: theme === value,
-    radio: true,
-    onSelect: () => settings.update({ theme: value }),
-  });
+  const tab = getActiveTab();
+  const hasDoc = !!tab;
   return [
-    {
-      label: 'Theme',
-      submenu: [themeItem('System', 'system'), themeItem('Light', 'light'), themeItem('Dark', 'dark')],
-    },
-    {
-      label: 'Autosave',
-      checked: settings.get().autosave,
-      onSelect: () => settings.update({ autosave: !settings.get().autosave }),
-    },
-    'separator',
-    { label: 'Zoom in', onSelect: () => zoomBy(1) },
-    { label: 'Zoom out', onSelect: () => zoomBy(-1) },
-    { label: 'Reset zoom', onSelect: () => zoomBy(0) },
-    { label: `Zoom: ${zoom}%`, disabled: true },
-    'separator',
     { label: 'Export HTML…', disabled: !hasDoc, onSelect: exportHtml },
     { label: 'Print…', disabled: !hasDoc, onSelect: printDoc },
     'separator',
+    { label: 'Show in Explorer', disabled: !tab?.path, onSelect: () => revealActive() },
+    { label: 'Copy path', disabled: !tab?.path, onSelect: () => copyActivePath() },
+    'separator',
+    { label: 'Settings…', key: 'Ctrl ,', onSelect: () => showSettings() },
     { label: 'Check for updates…', onSelect: () => updater.checkNow() },
     { label: 'About Folio', onSelect: showAbout },
   ];
 }
 
+function revealActive() {
+  const path = getActiveTab()?.path;
+  if (!path) return;
+  Promise.resolve(backend.revealPath(path)).catch((err) => fileOpError('show', basename(path), err));
+}
+
+function copyActivePath() {
+  const path = getActiveTab()?.path;
+  if (!path) return;
+  Promise.resolve(navigator.clipboard?.writeText(path)).catch((err) =>
+    showBanner(`Couldn't copy the path: ${errorText(err)}`));
+}
+
 $('more-btn').addEventListener('click', () => {
-  openMenu($('more-btn'), moreMenuItems());
+  openMenu($('more-btn'), moreMenuItems(), { className: 'menu-wide' });
 });
 
 // ---- modes ---------------------------------------------------------------
@@ -402,7 +454,7 @@ function showBanner(message, kind = 'error', actions = []) {
     ...actions.map((a) => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = a.primary ? 'btn btn-small btn-primary' : 'btn btn-small';
+      b.className = a.primary ? 'btn btn-primary' : 'btn';
       b.textContent = a.label;
       b.addEventListener('click', () => a.onSelect());
       return b;
@@ -410,7 +462,6 @@ function showBanner(message, kind = 'error', actions = []) {
   );
   bannerActions.hidden = !actions.length;
   banner.classList.toggle('banner-error', kind !== 'info');
-  banner.classList.toggle('banner-info', kind === 'info');
   banner.setAttribute('role', kind === 'info' ? 'status' : 'alert');
   banner.hidden = false;
 }
@@ -1528,25 +1579,31 @@ function renderNow() {
   }
 
   tabbar.hidden = !hasTabs;
-  toolbar.hidden = !tab;
+  $('new-tab').hidden = !hasTabs;
+  docHeader.hidden = !tab;
   start.hidden = hasTabs;
   doc.hidden = !tab;
+  appEl.classList.toggle('is-start', !hasTabs);
 
   renderTabs();
   renderSidebar(tab);
+  appEl.classList.toggle('has-sidebar', !sidebarEl.hidden);
+  const toggle = $('sidebar-toggle');
+  toggle.hidden = !roomy.matches || (!hasTabs && !folder);
+  toggle.setAttribute('aria-pressed', String(!sidebarEl.hidden));
   if (!hasTabs) renderRecentList();
 
   renderTabBanner(tab);
 
   if (tab) {
-    filename.textContent = tab.title;
-    filename.title = tab.path || tab.title;
+    renderDocHeader(tab, next);
     for (const btn of modeSwitch.children) {
       btn.setAttribute('aria-pressed', String(btn.dataset.mode === tab.mode));
     }
   }
 
   syncWordCount(tab);
+  syncStatus(tab, next);
 
   // True when the editor already shows this text (it came from typing).
   const typed = !!tab && editorFor.id === tab.id && editorFor.text === tab.text;
@@ -1616,7 +1673,8 @@ const scrollerOf = (name) => (name === 'files'
 // Only the selected tab's content is built. The tree is rebuilt only when it,
 // what is expanded, or the active file changed.
 function renderSidebar(tab) {
-  const visible = sidebarIsShown();
+  // The start screen has no sidebar unless a folder is open.
+  const visible = sidebarIsShown() && (state.tabs.length > 0 || !!folder);
   if (laidOutTab) {
     const scroller = scrollerOf(laidOutTab);
     if (scroller && (!visible || laidOutTab !== sidebarTab)) panelScroll.set(laidOutTab, scroller.scrollTop);
@@ -1639,13 +1697,16 @@ function renderSidebar(tab) {
   if (sidebarTab === 'files') {
     filesEmpty.hidden = !!folder;
     filesTree.hidden = !folder;
+    renderFilesRecent();
     if (folder) {
       const activePath = tab?.path ?? null;
-      const key = `${treeVersion}|${activePath == null ? '' : T.normalizePath(activePath)}`;
+      const dirtyPaths = new Set(state.tabs.filter((t) => t.path && T.isDirty(t)).map((t) => T.normalizePath(t.path)));
+      const key = `${treeVersion}|${activePath == null ? '' : T.normalizePath(activePath)}|${[...dirtyPaths].join('\n')}`;
       if (key !== lastSidebarKey) {
         lastSidebarKey = key;
         renderTree(filesTree, displayRoot(), {
           activePath,
+          dirtyPaths,
           expanded,
           truncated: folder.truncated,
           onOpen: (path) => openPaths([path]),
@@ -1715,7 +1776,6 @@ function drawSearch() {
       search.matchCase = !search.matchCase;
       scheduleSearch(true);
     },
-    onRefresh: () => scheduleSearch(true),
     onToggleFile: (path) => {
       if (!search.collapsed.delete(path)) search.collapsed.add(path);
       searchVersion += 1;
@@ -1938,6 +1998,10 @@ function setOutlineEntry(entry) {
 }
 
 function drawOutline(reveal) {
+  const tab = activeTab();
+  outlineTitle.textContent = tab ? tab.title : '';
+  const n = outlineEntry.headings.length;
+  outlineCount.textContent = tab ? `${n} ${n === 1 ? 'heading' : 'headings'}` : '';
   renderOutline(outlinePanel, outlineEntry.outline, {
     current: outlineCurrent,
     collapsed: outlineEntry.id ? collapsedFor(outlineEntry.id) : new Set(),
@@ -2007,7 +2071,8 @@ function queueOutlineCurrent() {
 content.addEventListener('scroll', queueOutlineCurrent, { passive: true });
 window.addEventListener('resize', queueOutlineCurrent);
 
-function onEditorCursor() {
+function onEditorCursor(line, col) {
+  setCursorLabel(line, col);
   if (view === 'edit') syncOutlineCurrent(true);
 }
 
@@ -2039,7 +2104,166 @@ function renderRecentList() {
   const key = JSON.stringify(recent);
   if (key === lastRecentKey) return;
   lastRecentKey = key;
-  renderRecent(recentEl, recent, { onOpen: openRecent });
+  renderRecent(recentEl, recent, { onOpen: openRecent, maxFiles: 5, maxFolders: 3 });
+}
+
+// Up to three recent files, pinned to the bottom of the Files tab.
+let lastFilesRecentKey = null;
+function renderFilesRecent() {
+  const files = recent.files.slice(0, 3);
+  const key = JSON.stringify(files);
+  if (key === lastFilesRecentKey) return;
+  lastFilesRecentKey = key;
+  filesRecent.hidden = !files.length;
+  if (!files.length) {
+    filesRecent.replaceChildren();
+    return;
+  }
+  const title = document.createElement('div');
+  title.className = 'files-recent-title';
+  title.textContent = 'Recent';
+  const items = files.map((path) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'files-recent-item';
+    b.title = path;
+    const name = document.createElement('span');
+    name.className = 'files-recent-name';
+    name.textContent = basename(path);
+    const dir = document.createElement('span');
+    dir.className = 'files-recent-dir';
+    dir.textContent = basename(dirname(path)) || dirname(path);
+    b.append(name, dir);
+    b.addEventListener('click', () => openRecent(path, 'file'));
+    return b;
+  });
+  filesRecent.replaceChildren(title, ...items);
+}
+
+// ---- doc header and status bar -------------------------------------------
+
+// `folder / sub / file.md`: relative to the open folder when the file is in
+// it, else its parent folder's name.
+function crumbsFor(tab) {
+  if (!tab.path) return [tab.title];
+  if (folder && isInside(folder.path, tab.path)) {
+    const rel = tab.path.slice(folder.path.length).split(/[\\/]+/).filter(Boolean);
+    return [basename(folder.path) || folder.path, ...rel];
+  }
+  const parent = basename(dirname(tab.path));
+  return parent ? [parent, tab.title] : [tab.title];
+}
+
+function saveStateOf(tab) {
+  if (T.isDirty(tab)) return 'Edited';
+  if (!tab.path) return '';
+  return autosaved.has(tab.id) ? 'Autosaved' : 'Saved';
+}
+
+let lastHeaderKey = null;
+function renderDocHeader(tab, v) {
+  formatBar.hidden = !showsEditor(v);
+  const crumbs = crumbsFor(tab);
+  const saveState = saveStateOf(tab);
+  const key = JSON.stringify([crumbs, saveState, tab.path]);
+  if (key === lastHeaderKey) return;
+  lastHeaderKey = key;
+  const parts = [];
+  crumbs.forEach((c, i) => {
+    const last = i === crumbs.length - 1;
+    if (i) {
+      const sep = document.createElement('span');
+      sep.className = 'crumb-sep';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = '/';
+      parts.push(sep);
+    }
+    const el = document.createElement('span');
+    el.className = last ? 'crumb crumb-file' : 'crumb';
+    el.textContent = c;
+    if (last) {
+      el.title = tab.path || tab.title;
+      el.setAttribute('aria-current', 'page');
+    }
+    parts.push(el);
+  });
+  const st = document.createElement('span');
+  st.className = 'save-state';
+  st.textContent = saveState;
+  st.hidden = !saveState;
+  parts.push(st);
+  breadcrumb.replaceChildren(...parts);
+}
+
+formatBar.addEventListener('mousedown', (e) => {
+  // Keep the editor's selection and focus while clicking a format button.
+  if (e.target.closest('button')) e.preventDefault();
+});
+formatBar.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-format]');
+  if (btn) editor.format(btn.dataset.format);
+});
+
+$('find-btn').addEventListener('click', () => findCommand());
+
+const THEME_NAMES = { system: 'System', light: 'Light', dark: 'Dark' };
+const NEXT_THEME = { system: 'light', light: 'dark', dark: 'system' };
+
+function setCursorLabel(line, col) {
+  statusPos.textContent = line ? `Ln ${line}, Col ${col}` : '';
+}
+
+// Words · reading time; Ln/Col in Edit and Split; the document's autosave,
+// line endings, encoding and zoom; the theme. The start screen only says
+// "No file open".
+function syncStatus(tab = activeTab(), v = view) {
+  const { autosave: auto, zoom, theme } = settings.get();
+  statusTheme.textContent = THEME_NAMES[theme];
+  statusTheme.title = `Theme: ${THEME_NAMES[theme]} (click to change)`;
+  if (!tab) {
+    statusDoc.hidden = true;
+    statusPos.hidden = true;
+    return;
+  }
+  statusDoc.hidden = false;
+  const editing = showsEditor(v);
+  if (editing && statusPos.hidden) {
+    const { line, col } = editor.cursorPos();
+    setCursorLabel(line, col);
+  }
+  statusPos.hidden = !editing;
+  statusAutosave.textContent = auto ? 'Autosave on' : 'Autosave off';
+  statusAutosave.setAttribute('aria-pressed', String(auto));
+  statusEol.textContent = tab.eol === 'crlf' ? 'CRLF' : 'LF';
+  statusEncoding.textContent = tab.bom ? 'UTF-8 BOM' : 'UTF-8';
+  statusZoom.textContent = `${zoom}%`;
+}
+
+statusAutosave.addEventListener('click', () => settings.update({ autosave: !settings.get().autosave }));
+statusZoom.addEventListener('click', () => zoomBy(0));
+statusTheme.addEventListener('click', () => settings.update({ theme: NEXT_THEME[settings.get().theme] }));
+settings.onChange(() => syncStatus());
+
+// ---- title bar ---------------------------------------------------------------
+
+$('sidebar-toggle').addEventListener('click', toggleSidebar);
+$('new-tab').addEventListener('click', newFile);
+$('command-field').addEventListener('click', () => openQuickOpenPalette());
+$('wc-min').addEventListener('click', () => backend.minimizeWindow().catch((err) => console.warn(err)));
+$('wc-max').addEventListener('click', () => backend.toggleMaximizeWindow().catch((err) => console.warn(err)));
+$('wc-close').addEventListener('click', () => backend.requestCloseWindow().catch((err) => console.warn(err)));
+
+async function syncMaximized() {
+  let max = false;
+  try {
+    max = await backend.isMaximized();
+  } catch {
+    return;
+  }
+  appEl.classList.toggle('is-maximized', max);
+  const btn = $('wc-max');
+  btn.setAttribute('aria-label', max ? 'Restore' : 'Maximize');
+  btn.title = max ? 'Restore' : 'Maximize';
 }
 
 // The active tab's own banner: a save error, or a change on disk.
@@ -2052,14 +2276,26 @@ function renderTabBanner(tab) {
     }
     return;
   }
-  if (tabBannerText.textContent !== b.text) tabBannerText.textContent = b.text;
+  if (tabBannerText.textContent !== b.text) setBannerText(tabBannerText, b.text, tab.title);
   const disk = b.kind === DISK_CHANGED;
   const recovered = b.kind === RECOVERED;
-  tabBanner.classList.toggle('banner-info', disk || recovered);
+  tabBanner.classList.toggle('banner-warn', disk || recovered);
   tabBanner.classList.toggle('banner-error', !disk && !recovered);
   tabBannerActions.hidden = !disk;
   tabBannerRecovered.hidden = !recovered;
   tabBanner.hidden = false;
+}
+
+// Banner text with the file's name (its first mention) in bold.
+function setBannerText(el, text, name) {
+  const at = name ? text.indexOf(name) : -1;
+  if (at < 0) {
+    el.textContent = text;
+    return;
+  }
+  const b = document.createElement('b');
+  b.textContent = name;
+  el.replaceChildren(text.slice(0, at), b, text.slice(at + name.length));
 }
 
 function renderShown(tab) {
@@ -2112,21 +2348,15 @@ function renderTabs() {
     name.textContent = tab.title;
     el.append(name);
 
-    if (T.isDirty(tab)) {
-      const dot = document.createElement('span');
-      dot.className = 'tab-dirty';
-      dot.setAttribute('aria-label', 'unsaved changes');
-      dot.textContent = '●';
-      el.append(dot);
-    }
-
+    // Unsaved: a dot in the close slot (× on hover).
+    const dirty = T.isDirty(tab);
+    el.classList.toggle('dirty', dirty);
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'tab-close';
     close.tabIndex = -1;
-    close.setAttribute('aria-label', `Close ${tab.title}`);
+    close.setAttribute('aria-label', dirty ? `Close ${tab.title} (unsaved changes)` : `Close ${tab.title}`);
     close.title = 'Close (Ctrl+W)';
-    close.textContent = '×';
     el.append(close);
 
     frag.append(el);
@@ -2158,9 +2388,49 @@ function docFragment(tab) {
 }
 
 function renderDoc(tab) {
-  doc.replaceChildren(docFragment(tab));
+  const frag = docFragment(tab);
+  addCodeHeaders(frag);
+  doc.replaceChildren(frag);
   enhanceDoc();
 }
+
+// Fenced code in the live document gets a header strip: its language and a
+// Copy button (not in exports or print, which use docFragment directly).
+// Mermaid blocks become diagrams and are left alone.
+function addCodeHeaders(root) {
+  for (const pre of root.querySelectorAll('pre')) {
+    const code = pre.querySelector(':scope > code');
+    if (!code || code.classList.contains('language-mermaid') || pre.parentElement?.classList.contains('code-block')) continue;
+    const lang = [...code.classList].find((c) => c.startsWith('language-'))?.slice(9) || '';
+    const wrap = document.createElement('div');
+    wrap.className = 'code-block';
+    const head = document.createElement('div');
+    head.className = 'code-header';
+    const label = document.createElement('span');
+    label.className = 'code-lang';
+    label.textContent = lang;
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'code-copy';
+    copy.textContent = 'Copy';
+    head.append(label, copy);
+    pre.replaceWith(wrap);
+    wrap.append(head, pre);
+  }
+}
+
+doc.addEventListener('click', (e) => {
+  const btn = e.target.closest('.code-copy');
+  if (!btn) return;
+  const code = btn.closest('.code-block')?.querySelector('pre > code');
+  if (!code) return;
+  Promise.resolve(navigator.clipboard?.writeText(code.textContent))
+    .then(() => {
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+    })
+    .catch((err) => console.warn('copy failed:', err));
+});
 
 // Maths and diagrams, after the text is in place. Rendering them changes what
 // find can see, so it re-reads the document once they are drawn.
@@ -2277,11 +2547,85 @@ function focusSearch() {
   }
 }
 
-function openQuickOpenPalette() {
+// The doc header's Find: the find bar where the document shows, else the
+// editor's search panel.
+function findCommand() {
+  if (!state.activeId) return;
+  if (showsDoc(view) && !editorEl.contains(document.activeElement)) openFind();
+  else if (showsEditor(view)) {
+    editor.focus();
+    editor.openSearch();
+  } else openFind();
+}
+
+// Everything the palette's command mode lists, in this order for an empty
+// query. `when` hides a command that can't run now.
+function paletteCommands() {
+  const tab = getActiveTab();
+  const editing = !!tab && showsEditor(view);
+  const fmt = (label, name, key) => ({ label, group: 'Format', key, when: editing, run: () => editor.format(name) });
+  const all = [
+    { label: 'Open file…', group: 'File', key: 'Ctrl+O', run: pickAndOpen },
+    { label: 'Open folder…', group: 'File', key: 'Ctrl+Shift+O', run: pickFolderAndOpen },
+    { label: 'New file', group: 'File', key: 'Ctrl+N', run: newFile },
+    { label: 'Save', group: 'File', key: 'Ctrl+S', when: !!tab, run: () => save(state.activeId) },
+    { label: 'Save as…', group: 'File', key: 'Ctrl+Shift+S', when: !!tab, run: () => save(state.activeId, { as: true }) },
+    { label: 'Close tab', group: 'File', key: 'Ctrl+W', when: !!tab, run: () => closeTab(state.activeId) },
+    { label: 'Export HTML…', group: 'File', when: !!tab, run: exportHtml },
+    { label: 'Print…', group: 'File', when: !!tab, run: printDoc },
+    { label: 'Show in Explorer', group: 'File', when: !!tab?.path, run: revealActive },
+    { label: 'Copy path', group: 'File', when: !!tab?.path, run: copyActivePath },
+    { label: 'Read', group: 'View', when: !!tab, run: () => setMode('read') },
+    { label: 'Edit', group: 'View', key: 'Ctrl+E', when: !!tab, run: () => setMode('edit') },
+    { label: 'Split', group: 'View', key: 'Ctrl+\\', when: !!tab, run: () => setMode('split') },
+    { label: 'Find in document', group: 'View', key: 'Ctrl+F', when: !!tab, run: findCommand },
+    { label: 'Toggle sidebar', group: 'View', key: 'Ctrl+Shift+B', run: toggleSidebar },
+    { label: 'Show outline', group: 'Sidebar', key: 'Ctrl+Shift+L', run: () => showSidebar('outline', { focus: true }) },
+    { label: 'Search folder', group: 'Sidebar', key: 'Ctrl+Shift+F', when: !!folder, run: focusSearch },
+    fmt('Heading', 'heading'),
+    fmt('Bold', 'bold', 'Ctrl+B'),
+    fmt('Italic', 'italic', 'Ctrl+I'),
+    fmt('Link', 'link', 'Ctrl+K'),
+    fmt('Inline code', 'code'),
+    fmt('Task list', 'task'),
+    { label: 'Zoom in', group: 'View', key: 'Ctrl+=', run: () => zoomBy(1) },
+    { label: 'Zoom out', group: 'View', key: 'Ctrl+-', run: () => zoomBy(-1) },
+    { label: 'Reset zoom', group: 'View', key: 'Ctrl+0', run: () => zoomBy(0) },
+    { label: 'Theme: System', group: 'Appearance', run: () => settings.update({ theme: 'system' }) },
+    { label: 'Theme: Light', group: 'Appearance', run: () => settings.update({ theme: 'light' }) },
+    { label: 'Theme: Dark', group: 'Appearance', run: () => settings.update({ theme: 'dark' }) },
+    {
+      label: settings.get().autosave ? 'Turn autosave off' : 'Turn autosave on',
+      group: 'Editing',
+      run: () => settings.update({ autosave: !settings.get().autosave }),
+    },
+    { label: 'Settings…', group: 'App', key: 'Ctrl+,', run: () => showSettings() },
+    { label: 'Check for updates…', group: 'App', run: () => updater.checkNow() },
+    { label: 'About Folio', group: 'App', run: showAbout },
+  ];
+  // Run after the palette has closed and focus is back.
+  return all.filter((c) => c.when !== false).map((c) => ({
+    ...c,
+    run: () => {
+      editor.flush();
+      c.run();
+    },
+  }));
+}
+
+function openQuickOpenPalette({ commands = false } = {}) {
   const files = folder
     ? flattenTree(folder.root)
     : recent.files.map((path) => ({ path, rel: dirname(path), name: basename(path) }));
-  openQuickOpen({ files, recentPaths: recent.files, onPick: (path) => openPaths([path]) });
+  closeMenu();
+  openQuickOpen({
+    files,
+    recentPaths: recent.files,
+    onPick: (path) => openPaths([path]),
+    commands: paletteCommands(),
+    startInCommands: commands,
+    scope: folder ? basename(folder.path) || folder.path : '',
+  });
 }
 
 // Capture phase, so the shortcuts also work (and win) inside the editor.
@@ -2291,7 +2635,7 @@ window.addEventListener('keydown', (e) => {
     e.stopPropagation();
     return;
   }
-  if (find.isOpen() && !modalOpen) {
+  if (find.isOpen() && !modalOpen && !isMenuOpen()) {
     if (e.key === 'F3' && !e.ctrlKey && !e.altKey && !e.metaKey) {
       // Also keeps the WebView's own find from opening.
       e.preventDefault();
@@ -2310,6 +2654,21 @@ window.addEventListener('keydown', (e) => {
         find.close();
         return;
       }
+    }
+  }
+  // Esc order: an open menu or palette handles it first (they stop it), then
+  // the find bar (above), then a banner. In the editor Esc stays CodeMirror's.
+  if (e.key === 'Escape' && !modalOpen && !isMenuOpen() && !e.ctrlKey && !e.altKey && !e.metaKey
+    && !editorEl.contains(document.activeElement)) {
+    if (!tabBanner.hidden) {
+      e.preventDefault();
+      $('tab-banner-close').click();
+      return;
+    }
+    if (!banner.hidden) {
+      e.preventDefault();
+      $('app-banner-close').click();
+      return;
     }
   }
   if (!e.ctrlKey || e.metaKey) return;
@@ -2337,9 +2696,11 @@ window.addEventListener('keydown', (e) => {
     action = focusSearch;
   } else if (key === 'l' && e.shiftKey) {
     action = () => showSidebar('outline', { focus: true });
-  } else if (key === 'p' && plain) {
-    // Also swallows the WebView's own print dialog.
-    action = openQuickOpenPalette;
+  } else if (key === 'p') {
+    // Also swallows the WebView's own print dialog. Ctrl+Shift+P: commands.
+    action = () => openQuickOpenPalette({ commands: e.shiftKey });
+  } else if ((key === ',' || e.code === 'Comma') && plain) {
+    action = () => showSettings();
   } else if (key === 'n' && plain) {
     action = newFile;
   } else if (key === 's') {
@@ -2431,9 +2792,15 @@ async function startup() {
       onFolderChanged(change).catch((err) => console.error('folder change failed:', err));
     });
     await backend.onDragDrop((paths) => {
+      $('drop').hidden = true;
       editor.flush();
       openPaths(paths, { folders: true });
     });
+    await backend.onDragHover((over) => {
+      $('drop').hidden = !over;
+    });
+    await backend.onResized(() => syncMaximized());
+    syncMaximized();
   } finally {
     listenersReady(); // even if a subscription failed: never leave the queue waiting
   }
@@ -2491,14 +2858,16 @@ async function exportHtml() {
     const theme = effectiveTheme();
     const el = await drawnCopy(tab, theme);
     const images = await collectImages(el, backend.readImageBase64, (img) => localImages.get(img));
+    const { docFont } = settings.get();
     const css = await collectCss(el, {
       fetchText: async (url) => (await fetchOk(url)).text(),
       fetchBase64,
+      docFont,
     });
     const h1 = el.querySelector('h1')?.cloneNode(true);
     h1?.querySelectorAll('.katex-mathml').forEach((n) => n.remove()); // the visible maths text is enough
     const title = h1?.textContent.trim() || stem;
-    const html = buildExportHtml({ title, bodyHtml: el.innerHTML, css, theme, images });
+    const html = buildExportHtml({ title, bodyHtml: el.innerHTML, css, theme, images, docFont });
     await backend.writeFile(path, html, 'lf', false);
     showBanner(`Exported ${name}.`, 'info');
   } catch (err) {

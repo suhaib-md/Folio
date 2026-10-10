@@ -92,6 +92,14 @@ const real = {
     getCurrentWebview().onDragDropEvent((e) => {
       if (e.payload.type === 'drop') cb(e.payload.paths);
     }),
+  // cb(true) while files are dragged over the window, cb(false) when they
+  // leave or drop.
+  onDragHover: (cb) =>
+    getCurrentWebview().onDragDropEvent((e) => {
+      const type = e.payload.type;
+      if (type === 'enter' || type === 'over') cb(true);
+      else cb(false);
+    }),
   // cb resolves true to let the window close, false to keep it open.
   onCloseRequested: (cb) =>
     getCurrentWindow().onCloseRequested(async (e) => {
@@ -100,6 +108,13 @@ const real = {
   // destroy() skips the close-requested handler (we already asked).
   closeWindow: () => getCurrentWindow().destroy(),
   setTitle: (t) => getCurrentWindow().setTitle(t),
+  // The custom title bar's window controls (the window has no decorations).
+  minimizeWindow: () => getCurrentWindow().minimize(),
+  toggleMaximizeWindow: () => getCurrentWindow().toggleMaximize(),
+  isMaximized: () => getCurrentWindow().isMaximized(),
+  onResized: (cb) => getCurrentWindow().onResized(() => cb()),
+  // close() goes through the close-requested handler (unsaved changes).
+  requestCloseWindow: () => getCurrentWindow().close(),
   // 'light' | 'dark' forces the title bar theme, null follows the system.
   setWindowTheme: (theme) => getCurrentWindow().setTheme(theme),
 };
@@ -148,4 +163,10 @@ export const onDragDrop = (cb) => impl.onDragDrop(cb);
 export const onCloseRequested = (cb) => impl.onCloseRequested(cb);
 export const closeWindow = () => impl.closeWindow();
 export const setTitle = (t) => impl.setTitle(t);
+export const minimizeWindow = () => impl.minimizeWindow();
+export const toggleMaximizeWindow = () => impl.toggleMaximizeWindow();
+export const isMaximized = () => impl.isMaximized();
+export const onResized = (cb) => impl.onResized(cb);
+export const onDragHover = (cb) => impl.onDragHover(cb);
+export const requestCloseWindow = () => impl.requestCloseWindow();
 export const setWindowTheme = (theme) => impl.setWindowTheme(theme);

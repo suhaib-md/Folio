@@ -75,3 +75,11 @@ test('release job checks the updater key before building', () => {
   assert.ok(check > 0, 'release job runs the key check');
   assert.ok(check < action, 'key check runs before the tauri-action step');
 });
+
+test('frameless window with its own title bar controls', () => {
+  assert.equal(conf.app.windows[0].decorations, false);
+  const caps = JSON.parse(readFileSync(new URL('../src-tauri/capabilities/default.json', import.meta.url), 'utf8'));
+  for (const p of ['minimize', 'toggle-maximize', 'internal-toggle-maximize', 'close', 'start-dragging', 'is-maximized']) {
+    assert.ok(caps.permissions.includes(`core:window:allow-${p}`), p);
+  }
+});
