@@ -76,7 +76,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZERDc3N0REMDhENEY4ODQKUldTRStOUUkzWGZYYlNVZ0pVZExPcEU0VXgzS0F2MEZqK29iNVhwRzVyWDVURkdMb0pYVXFkTUMK",
       "endpoints": [
         "https://github.com/suhaib-md/Folio/releases/latest/download/latest.json"
       ],
