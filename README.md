@@ -115,7 +115,7 @@ npm test
 ```bash
 npm ci
 npx tauri build
-# installer: src-tauri/target/release/bundle/nsis/Folio_0.3.0_x64-setup.exe
+# installer: src-tauri/target/release/bundle/nsis/Folio_0.4.0_x64-setup.exe
 ```
 
 CI (`.github/workflows/desktop.yml`) runs the tests and builds this
@@ -129,7 +129,7 @@ installer on every push and pull request.
 1. Bump the version in `package.json`, `src-tauri/Cargo.toml`,
    `src-tauri/folio-core/Cargo.toml` and `src-tauri/tauri.conf.json`
    (refresh the lock files), and commit.
-2. Tag and push the tag: `git tag v0.3.0 && git push origin v0.3.0`.
+2. Tag and push the tag: `git tag v0.4.0 && git push origin v0.4.0`.
 3. CI builds a signed draft release with the installer, the update package
    and `latest.json` (needs the secrets from
    [docs/updater-setup.md](docs/updater-setup.md)).
