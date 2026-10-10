@@ -453,7 +453,18 @@ let chain = Promise.resolve();
 export function setModalOpen(open) {
   modalDepth = open ? modalDepth + 1 : Math.max(0, modalDepth - 1);
   modalOpen = modalDepth > 0;
-  if (!modalOpen && pending.length) enqueue(pending.splice(0));
+  if (!modalOpen && pending.length) {
+    // The closing dialog took focus with it; once the queued opens ran, put
+    // it back in the editor, or on the content pane in Read mode.
+    enqueue(pending.splice(0)).then(() => {
+      if (modalOpen) return;
+      const a = document.activeElement;
+      // Something visible with focus keeps it (a hidden editor does not count).
+      if (a && a !== document.body && a.getClientRects().length) return;
+      if (showsEditor(view)) editor.focus();
+      else content.focus({ preventScroll: true });
+    });
+  }
 }
 
 function enqueue(jobs) {
