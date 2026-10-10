@@ -8,6 +8,9 @@ import { createMathExtension } from '../src/math-extension.js';
 import { extractHeadings } from '../src/desktop/outline.js';
 import { budget, bestOf } from './perf-budget.mjs';
 
+// Normalise CRLF so the tests pass even if git checks files out with CRLF.
+const readText = (p) => readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
+
 const win = new JSDOM('').window;
 const plain = createRenderer(win);
 const math = createRenderer(win, { math: true });
@@ -75,9 +78,9 @@ test('hostile tex cannot inject markup', () => {
 });
 
 test('default renderer unchanged (byte-identical to the 0.2 snapshot)', () => {
-  const sample = readFileSync('tests/sample.md', 'utf8');
+  const sample = readText('tests/sample.md');
   // Snapshot of createRenderer(win)(sample.md) from commit 45a2e56.
-  const snapshot = readFileSync('tests/fixtures/sample.0.2.html', 'utf8');
+  const snapshot = readText('tests/fixtures/sample.0.2.html');
   assert.equal(plain(sample), snapshot);
   assert.equal(createRenderer(win, { math: false })(sample), snapshot);
   const dollars = 'Price $5 and $10, `$x$`, $$\nz\n$$, \\$ and $a$.\n';
@@ -87,7 +90,7 @@ test('default renderer unchanged (byte-identical to the 0.2 snapshot)', () => {
 });
 
 test('sample.md renders the same with math on unless it uses maths', () => {
-  const sample = readFileSync('tests/sample.md', 'utf8');
+  const sample = readText('tests/sample.md');
   // sample.md has `$` only in prose/code that is not maths.
   assert.equal(math(sample), plain(sample));
 });
