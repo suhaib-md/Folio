@@ -46,7 +46,8 @@ const releaseJob = workflow.slice(workflow.indexOf('\n  release:'));
 test('endpoint is the latest.json url', () => {
   const u = conf.plugins.updater;
   assert.deepEqual(u.endpoints, ['https://github.com/suhaib-md/Folio/releases/latest/download/latest.json']);
-  assert.equal(typeof u.pubkey, 'string'); // empty until the user supplies one
+  // The minisign public key the release signing key pairs with (docs/updater-setup.md).
+  assert.match(Buffer.from(u.pubkey, 'base64').toString(), /^untrusted comment: minisign public key: [0-9A-F]{16}\n\S+\n?$/);
   assert.equal(u.windows.installMode, 'passive');
 });
 
