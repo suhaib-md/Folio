@@ -4,84 +4,145 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Folio</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="__FAVICON__">
 <link rel="stylesheet" href="./app.css">
 <script type="module" src="./app.js"></script>
 </head>
 <body>
-<div class="app">
-  <aside id="sidebar" class="sidebar" aria-label="Sidebar" hidden>
-    <div class="sidebar-tabs" role="tablist" aria-label="Sidebar views">
-      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-files" data-tab="files" aria-controls="sidebar-panel-files" aria-selected="true" title="Files">Files</button>
-      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-outline" data-tab="outline" aria-controls="sidebar-panel-outline" aria-selected="false" tabindex="-1" title="Outline (Ctrl+Shift+L)">Outline</button>
-      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-search" data-tab="search" aria-controls="sidebar-panel-search" aria-selected="false" tabindex="-1" title="Search">Search</button>
+<div class="app is-start">
+  <header id="titlebar" class="titlebar" data-tauri-drag-region>
+    <div class="titlebar-brand" data-tauri-drag-region>
+      <img class="app-mark" src="__FAVICON__" alt="" width="18" height="18" data-tauri-drag-region>
+      <span class="app-name" data-tauri-drag-region>Folio</span>
+      <button id="sidebar-toggle" type="button" class="icon-btn" title="Toggle sidebar (Ctrl+Shift+B)" aria-label="Toggle sidebar" aria-pressed="false" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" stroke-width="1.2"/></svg></button>
     </div>
-    <div id="sidebar-panel-files" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-tab-files">
-      <div id="files-tree" class="files-tree"></div>
-      <div id="files-empty" class="sidebar-empty" hidden>
-        <button id="sidebar-open-folder" type="button" class="btn" title="Open a folder (Ctrl+Shift+O)">Open folder</button>
+    <div class="titlebar-tabs" data-tauri-drag-region>
+      <div id="tabbar" class="tabbar" role="tablist" aria-label="Open files" hidden></div>
+      <button id="new-tab" type="button" class="icon-btn new-tab" title="New file (Ctrl+N)" aria-label="New file" hidden>+</button>
+    </div>
+    <button id="command-field" type="button" class="command-field" title="Go to file or run a command (Ctrl+P)">
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.3"/></svg>
+      <span class="command-field-label">Go to file or run a command</span>
+      <kbd>Ctrl P</kbd>
+    </button>
+    <div id="window-controls" class="window-controls">
+      <button id="wc-min" type="button" class="wc-min" aria-label="Minimize" title="Minimize" tabindex="-1"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><line x1="0" y1="5" x2="10" y2="5" stroke="currentColor"/></svg></button>
+      <button id="wc-max" type="button" class="wc-max" aria-label="Maximize" title="Maximize" tabindex="-1"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+      <button id="wc-close" type="button" class="wc-close" aria-label="Close" title="Close" tabindex="-1"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor"/><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor"/></svg></button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside id="sidebar" class="sidebar" aria-label="Sidebar" hidden>
+      <div class="sidebar-tabs seg" role="tablist" aria-label="Sidebar views">
+        <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-files" data-tab="files" aria-controls="sidebar-panel-files" aria-selected="true" title="Files">Files</button>
+        <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-outline" data-tab="outline" aria-controls="sidebar-panel-outline" aria-selected="false" tabindex="-1" title="Outline (Ctrl+Shift+L)">Outline</button>
+        <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-search" data-tab="search" aria-controls="sidebar-panel-search" aria-selected="false" tabindex="-1" title="Search folder (Ctrl+Shift+F)">Search</button>
       </div>
-    </div>
-    <div id="sidebar-panel-outline" class="sidebar-panel outline-panel" role="tabpanel" aria-labelledby="sidebar-tab-outline" hidden></div>
-    <div id="sidebar-panel-search" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-tab-search" hidden>
-      <div id="search-panel" class="search-panel"></div>
-    </div>
-  </aside>
-
-  <div class="main">
-    <div id="tabbar" class="tabbar" role="tablist" aria-label="Open files" hidden></div>
-
-    <div id="toolbar" class="toolbar" hidden>
-      <span id="filename" class="filename"></span>
-      <span id="wordcount" class="wordcount" aria-live="off" hidden></span>
-      <div id="mode-switch" class="mode-switch" role="group" aria-label="View mode">
-        <button type="button" class="mode-btn" data-mode="read" aria-pressed="false" title="Read (Ctrl+E)">Read</button>
-        <button type="button" class="mode-btn" data-mode="edit" aria-pressed="false" title="Edit (Ctrl+E)">Edit</button>
-        <button type="button" class="mode-btn" data-mode="split" aria-pressed="false" title="Split (Ctrl+\)">Split</button>
-      </div>
-      <button id="more-btn" type="button" class="more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" title="More actions">⋯</button>
-    </div>
-
-    <div id="app-banner" class="banner banner-error" role="alert" hidden>
-      <span id="app-banner-text" class="banner-text"></span>
-      <div id="app-banner-actions" class="banner-actions" hidden></div>
-      <button id="app-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss">×</button>
-    </div>
-
-    <div id="tab-banner" class="banner banner-error" role="alert" hidden>
-      <span id="tab-banner-text" class="banner-text"></span>
-      <div id="tab-banner-actions" class="banner-actions" hidden>
-        <button id="tab-banner-reload" type="button" class="btn btn-small btn-primary">Reload</button>
-        <button id="tab-banner-keep" type="button" class="btn btn-small">Keep mine</button>
-      </div>
-      <div id="tab-banner-recovered" class="banner-actions" hidden>
-        <button id="tab-banner-keep-draft" type="button" class="btn btn-small btn-primary">Keep</button>
-        <button id="tab-banner-discard-draft" type="button" class="btn btn-small">Discard</button>
-      </div>
-      <button id="tab-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss">×</button>
-    </div>
-
-    <div id="panes" class="panes" data-view="read">
-      <div id="find" class="find-bar" role="search" aria-label="Find in document" hidden></div>
-      <div id="editor" class="editor-pane" hidden></div>
-      <main id="content" class="content" tabindex="-1">
-        <div class="column">
-          <section id="start" class="empty start">
-            <h1 class="wordmark">Folio</h1>
-            <div class="start-actions">
-              <button id="start-open-file" type="button" class="btn btn-primary" title="Open a file (Ctrl+O)">Open file</button>
-              <button id="start-open-folder" type="button" class="btn" title="Open a folder (Ctrl+Shift+O)">Open folder</button>
-              <button id="start-new-file" type="button" class="btn" title="New file (Ctrl+N)">New file</button>
-            </div>
-            <p>or drop a Markdown file or folder here</p>
-            <div id="recent" class="recent"></div>
-          </section>
-          <article id="doc" class="markdown" hidden></article>
+      <div id="sidebar-panel-files" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-tab-files">
+        <div id="files-tree" class="files-tree"></div>
+        <div id="files-empty" class="sidebar-empty" hidden>
+          <button id="sidebar-open-folder" type="button" class="btn" title="Open a folder (Ctrl+Shift+O)">Open folder</button>
         </div>
-      </main>
+        <div id="files-recent" class="files-recent" hidden></div>
+      </div>
+      <div id="sidebar-panel-outline" class="sidebar-panel outline-panel" role="tabpanel" aria-labelledby="sidebar-tab-outline" hidden>
+        <div class="sidebar-header">
+          <span id="outline-title" class="sidebar-title"></span>
+          <span id="outline-count" class="sidebar-meta"></span>
+        </div>
+        <div id="outline-list" class="outline-scroll"></div>
+      </div>
+      <div id="sidebar-panel-search" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-tab-search" hidden>
+        <div id="search-panel" class="search-panel"></div>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div id="doc-header" class="doc-header" hidden>
+        <nav id="breadcrumb" class="breadcrumb" aria-label="File location"></nav>
+        <div id="format-bar" class="format-bar" role="toolbar" aria-label="Formatting" hidden>
+          <button type="button" class="fmt-h" data-format="heading" title="Heading (cycles the level)" aria-label="Heading">H</button>
+          <button type="button" class="fmt-b" data-format="bold" title="Bold (Ctrl+B)" aria-label="Bold">B</button>
+          <button type="button" class="fmt-i" data-format="italic" title="Italic (Ctrl+I)" aria-label="Italic">I</button>
+          <button type="button" data-format="link" title="Link (Ctrl+K)">Link</button>
+          <button type="button" class="fmt-code" data-format="code" title="Inline code" aria-label="Inline code">`code`</button>
+          <button type="button" data-format="task" title="Task list (toggles - [ ])" aria-label="Task list">Task</button>
+        </div>
+        <div id="mode-switch" class="mode-switch seg" role="group" aria-label="View mode">
+          <button type="button" class="mode-btn" data-mode="read" aria-pressed="false" title="Read (Ctrl+E)">Read</button>
+          <button type="button" class="mode-btn" data-mode="edit" aria-pressed="false" title="Edit (Ctrl+E)">Edit</button>
+          <button type="button" class="mode-btn" data-mode="split" aria-pressed="false" title="Split (Ctrl+\)">Split</button>
+        </div>
+        <button id="find-btn" type="button" class="icon-btn" title="Find (Ctrl+F)" aria-label="Find"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.3"/></svg></button>
+        <button id="more-btn" type="button" class="icon-btn more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" title="More actions"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><circle cx="3" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="13" cy="8" r="1.3" fill="currentColor"/></svg></button>
+      </div>
+
+      <div id="app-banner" class="banner banner-error" role="alert" hidden>
+        <span class="banner-dot" aria-hidden="true"></span>
+        <span id="app-banner-text" class="banner-text"></span>
+        <div id="app-banner-actions" class="banner-actions" hidden></div>
+        <button id="app-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss (Esc)">×</button>
+      </div>
+
+      <div id="tab-banner" class="banner banner-error" role="alert" hidden>
+        <span class="banner-dot" aria-hidden="true"></span>
+        <span id="tab-banner-text" class="banner-text"></span>
+        <div id="tab-banner-actions" class="banner-actions" hidden>
+          <button id="tab-banner-keep" type="button" class="btn">Keep mine</button>
+          <button id="tab-banner-reload" type="button" class="btn btn-primary">Reload</button>
+        </div>
+        <div id="tab-banner-recovered" class="banner-actions" hidden>
+          <button id="tab-banner-discard-draft" type="button" class="btn">Discard</button>
+          <button id="tab-banner-keep-draft" type="button" class="btn btn-primary">Keep</button>
+        </div>
+        <button id="tab-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss (Esc)">×</button>
+      </div>
+
+      <div id="panes" class="panes" data-view="read">
+        <div id="find" class="find-bar" role="search" aria-label="Find in document" hidden></div>
+        <div id="editor" class="editor-pane" hidden></div>
+        <main id="content" class="content" tabindex="-1">
+          <section id="start" class="start">
+            <div class="start-grid">
+              <div class="start-intro">
+                <div>
+                  <h1 class="wordmark">Folio</h1>
+                  <p class="tagline">Read and edit Markdown, offline.</p>
+                </div>
+                <div class="start-actions">
+                  <button id="start-open-file" type="button" class="start-action primary" title="Open a file (Ctrl+O)"><span>Open file</span><kbd>Ctrl O</kbd></button>
+                  <button id="start-open-folder" type="button" class="start-action" title="Open a folder (Ctrl+Shift+O)"><span>Open folder</span><kbd>Ctrl Shift O</kbd></button>
+                  <button id="start-new-file" type="button" class="start-action" title="New file (Ctrl+N)"><span>New file</span><kbd>Ctrl N</kbd></button>
+                </div>
+                <p class="start-hint">You can also drop a Markdown file or folder anywhere in the window.</p>
+              </div>
+              <div id="recent" class="recent"></div>
+            </div>
+          </section>
+          <div class="column">
+            <article id="doc" class="markdown" hidden></article>
+          </div>
+        </main>
+      </div>
     </div>
   </div>
+
+  <footer id="statusbar" class="statusbar">
+    <span id="status-words"></span>
+    <span id="status-pos" class="status-pos" hidden></span>
+    <span class="status-spacer"></span>
+    <div id="update-pill" class="update-pill" role="status" hidden></div>
+    <div id="status-doc" class="status-right" hidden>
+      <button id="status-autosave" type="button" class="status-item" title="Autosave (click to toggle)"></button>
+      <span id="status-eol" class="status-item status-hide-narrow" title="Line endings"></span>
+      <span id="status-encoding" class="status-item status-hide-narrow" title="Encoding"></span>
+      <button id="status-zoom" type="button" class="status-item status-zoom" title="Zoom (Ctrl+= / Ctrl+-). Click to reset"></button>
+    </div>
+    <button id="status-theme" type="button" class="status-item" title="Theme (click to change)"></button>
+  </footer>
 </div>
+<div id="drop" class="drop" hidden><span>Drop to open</span></div>
 <div id="print-area" class="print-area" aria-hidden="true"></div>
 </body>
 </html>

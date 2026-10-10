@@ -47,7 +47,8 @@ const el = (doc, tag, attrs = {}, text) => {
 // Text that is in the DOM but not part of what the reader sees: KaTeX adds a
 // visually-hidden MathML copy of every formula, and Mermaid's SVG carries a
 // <style> element (display:inline inside SVG) full of CSS text.
-const IGNORE = '.katex-mathml, style, script';
+// The code-block header strip (language, Copy) is chrome, not document text.
+const IGNORE = '.katex-mathml, style, script, .code-header';
 
 // root: an empty container (the bar is built into it); getDocEl: the element
 // holding the rendered document (may be replaced between calls).
@@ -60,11 +61,11 @@ export function createFindBar(root, getDocEl) {
     spellcheck: 'false', autocomplete: 'off',
   });
   const count = el(document, 'span', { class: 'find-count', 'aria-live': 'polite' });
-  const prev = el(document, 'button', { type: 'button', class: 'find-btn', 'aria-label': 'Previous match', title: 'Previous match (Shift+Enter)' }, '↑');
-  const next = el(document, 'button', { type: 'button', class: 'find-btn', 'aria-label': 'Next match', title: 'Next match (Enter)' }, '↓');
-  const caseBtn = el(document, 'button', { type: 'button', class: 'find-btn find-case', 'aria-pressed': 'false', title: 'Match case' }, 'Aa');
-  const closeBtn = el(document, 'button', { type: 'button', class: 'find-btn', 'aria-label': 'Close find', title: 'Close (Esc)' }, '✕');
-  root.replaceChildren(input, count, prev, next, caseBtn, closeBtn);
+  const prev = el(document, 'button', { type: 'button', class: 'find-btn', 'aria-label': 'Previous match', title: 'Previous (Shift+Enter)' }, '↑');
+  const next = el(document, 'button', { type: 'button', class: 'find-btn', 'aria-label': 'Next match', title: 'Next (Enter)' }, '↓');
+  const caseBtn = el(document, 'button', { type: 'button', class: 'find-case', 'aria-pressed': 'false', title: 'Match case' }, 'Aa');
+  const closeBtn = el(document, 'button', { type: 'button', class: 'find-btn find-close', 'aria-label': 'Close find', title: 'Close (Esc)' }, '×');
+  root.replaceChildren(input, count, caseBtn, prev, next, closeBtn);
   root.hidden = true;
 
   let open = false;

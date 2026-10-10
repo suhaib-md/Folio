@@ -120,7 +120,7 @@ async function renderMath(nodes, alive, fixedErrorColor) {
   if (!alive()) return;
   // Inline style beats CSS, so the error colour comes from the theme here.
   const errorColor = fixedErrorColor
-    || getComputedStyle(document.documentElement).getPropertyValue('--danger-fg').trim() || '#cc0000';
+    || getComputedStyle(document.documentElement).getPropertyValue('--danger').trim() || '#cc0000';
   for (const el of nodes) {
     const tex = el.getAttribute('data-tex') ?? el.textContent;
     const displayMode = el.classList.contains('math-display');

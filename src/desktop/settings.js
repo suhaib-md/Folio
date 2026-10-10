@@ -14,11 +14,13 @@ export function zoomStep(zoom, dir) {
 const THEMES = ['system', 'light', 'dark'];
 const SIDEBAR_TABS = ['files', 'outline', 'search'];
 const MODES = ['read', 'edit', 'split'];
+const DOC_FONTS = ['serif', 'sans'];
 
 export const DEFAULTS = Object.freeze({
   zoom: 100,
   theme: 'system',
   autosave: false,
+  docFont: 'serif',
   // visible: null until the user shows/hides the sidebar (then the 0.2 rule:
   // shown while a folder is open)
   sidebar: Object.freeze({ visible: null, tab: 'files' }),
@@ -48,6 +50,7 @@ export function normalize(raw) {
     zoom,
     theme: THEMES.includes(r.theme) ? r.theme : DEFAULTS.theme,
     autosave: r.autosave === undefined ? DEFAULTS.autosave : r.autosave === true || r.autosave === 'true',
+    docFont: DOC_FONTS.includes(r.docFont) ? r.docFont : DEFAULTS.docFont,
     sidebar: {
       visible: sb.visible === undefined || sb.visible === null
         ? null

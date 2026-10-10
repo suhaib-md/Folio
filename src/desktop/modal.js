@@ -2,6 +2,8 @@
 // until the first is answered.
 //
 // confirmSave(name) -> Promise<'save' | 'discard' | 'cancel'>
+// Layout: "Don't save" as a danger text button on the left; Cancel and Save
+// (with its Ctrl S hint) on the right.
 // Keyboard: focus starts on Save and is trapped in the dialog; Tab /
 // Shift+Tab cycle the buttons; Enter activates the focused button (Save
 // unless the user moved focus); Esc = Cancel. Focus returns to where it was.
@@ -26,18 +28,23 @@ export function modalClosed() {
 }
 
 export function confirmSave(name) {
-  return enqueueShow({ title: `Save changes to ${name}?`, buttons: SAVE_BUTTONS });
+  return enqueueShow({
+    title: `Save changes to ${name}?`,
+    body: 'Your edits will be lost if you close without saving.',
+    buttons: SAVE_BUTTONS,
+  });
 }
 
 // confirmAction({ title, confirmLabel, cancelLabel }) -> Promise<boolean>
-// A two-button question (first button focused; Esc = cancel), e.g. the
-// sidebar's "Move <name> to the Recycle Bin?" with Delete / Cancel.
-export function confirmAction({ title, confirmLabel, cancelLabel = 'Cancel' }) {
+// A two-button question (the confirm button focused; Esc = cancel), e.g. the
+// sidebar's "Move <name> to the Recycle Bin?" with Cancel / Delete.
+export function confirmAction({ title, body = '', confirmLabel, cancelLabel = 'Cancel' }) {
   return enqueueShow({
     title,
+    body,
     buttons: [
-      { value: 'confirm', label: confirmLabel, primary: true },
       { value: 'cancel', label: cancelLabel },
+      { value: 'confirm', label: confirmLabel, primary: true },
     ],
   }).then((v) => v === 'confirm');
 }
@@ -48,13 +55,15 @@ function enqueueShow(spec) {
   return result;
 }
 
+// In screen order; `left` ones sit before the spacer. The primary one has
+// focus first.
 const SAVE_BUTTONS = [
-  { value: 'save', label: 'Save', primary: true },
-  { value: 'discard', label: "Don't save" },
+  { value: 'discard', label: 'Don’t save', text: true, left: true },
   { value: 'cancel', label: 'Cancel' },
+  { value: 'save', label: 'Save', primary: true, kbd: 'Ctrl S' },
 ];
 
-function show({ title: titleText, buttons: BUTTONS }) {
+function show({ title: titleText, body: bodyText = '', buttons: BUTTONS }) {
   return new Promise((resolve) => {
     const id = `modal-title-${++seq}`;
     const previous = document.activeElement;
@@ -75,17 +84,35 @@ function show({ title: titleText, buttons: BUTTONS }) {
 
     const actions = document.createElement('div');
     actions.className = 'modal-actions';
-    const buttons = BUTTONS.map(({ value, label, primary }) => {
+    const buttons = BUTTONS.map(({ value, label, primary, text, kbd }) => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = primary ? 'btn btn-primary' : 'btn';
+      b.className = primary ? 'btn btn-primary' : text ? 'btn btn-text' : 'btn';
       b.textContent = label;
+      if (kbd) {
+        const k = document.createElement('span');
+        k.className = 'kbd';
+        k.setAttribute('aria-hidden', 'true');
+        k.textContent = kbd;
+        b.append(k);
+      }
       b.dataset.value = value;
       b.addEventListener('click', () => done(value));
       return b;
     });
-    actions.append(...buttons);
-    dialog.append(title, actions);
+    const spacer = document.createElement('span');
+    spacer.className = 'spacer';
+    const left = BUTTONS.filter((b) => b.left).length;
+    actions.append(...buttons.slice(0, left), spacer, ...buttons.slice(left));
+    const first = buttons[Math.max(0, BUTTONS.findIndex((b) => b.primary))];
+    dialog.append(title);
+    if (bodyText) {
+      const body = document.createElement('p');
+      body.className = 'modal-body';
+      body.textContent = bodyText;
+      dialog.append(body);
+    }
+    dialog.append(actions);
     backdrop.append(dialog);
 
     function onKey(e) {
@@ -94,7 +121,7 @@ function show({ title: titleText, buttons: BUTTONS }) {
         done('cancel');
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        const focused = buttons.includes(document.activeElement) ? document.activeElement : buttons[0];
+        const focused = buttons.includes(document.activeElement) ? document.activeElement : first;
         done(focused.dataset.value);
       } else if (e.key === 'Tab') {
         e.preventDefault();
@@ -116,7 +143,7 @@ function show({ title: titleText, buttons: BUTTONS }) {
     function onFocusOut(e) {
       if (!e.relatedTarget || !dialog.contains(e.relatedTarget)) {
         queueMicrotask(() => {
-          if (backdrop.isConnected && !dialog.contains(document.activeElement)) buttons[0].focus();
+          if (backdrop.isConnected && !dialog.contains(document.activeElement)) first.focus();
         });
       }
     }
@@ -144,6 +171,6 @@ function show({ title: titleText, buttons: BUTTONS }) {
     hooks.onOpen();
     if (app) app.inert = true;
     document.body.append(backdrop);
-    buttons[0].focus();
+    first.focus();
   });
 }

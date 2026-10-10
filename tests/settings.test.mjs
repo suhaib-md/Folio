@@ -16,6 +16,9 @@ test('normalize clamps zoom and theme', () => {
   assert.equal(normalize({ theme: 'purple' }).theme, 'system');
   assert.equal(normalize({ autosave: 'true' }).autosave, true);
   assert.equal(normalize({ autosave: 1 }).autosave, false);
+  assert.equal(normalize({}).docFont, 'serif');
+  assert.equal(normalize({ docFont: 'sans' }).docFont, 'sans');
+  assert.equal(normalize({ docFont: 'comic' }).docFont, 'serif');
 });
 
 test('normalize: sidebar.visible stays null until chosen', () => {

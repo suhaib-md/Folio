@@ -220,6 +220,12 @@ const fake = {
     if (allow) fake.closed = true;
     return allow;
   },
+  minimized: 0,
+  maximized: false,
+  // Simulates a file dragged over (true) or out of (false) the window.
+  dragHover(over) {
+    emit('drag-hover', over);
+  },
 };
 if (typeof window !== 'undefined' && !window.__TAURI_INTERNALS__) window.__fake = fake;
 
@@ -237,6 +243,7 @@ export async function settingsGet() {
     zoom: 100,
     theme: 'system',
     autosave: false,
+    docFont: 'serif',
     sidebar: { visible: null, tab: 'files' },
     session: { tabs: [], active: null, folder: null },
   };
@@ -644,6 +651,26 @@ export async function onCloseRequested(cb) {
 
 export async function closeWindow() {
   fake.closed = true;
+}
+
+export async function minimizeWindow() {
+  fake.minimized += 1;
+}
+
+export async function toggleMaximizeWindow() {
+  fake.maximized = !fake.maximized;
+  emit('resized', null);
+}
+
+export async function isMaximized() {
+  return fake.maximized;
+}
+
+export const onResized = (cb) => on('resized', cb);
+export const onDragHover = (cb) => on('drag-hover', cb);
+
+export function requestCloseWindow() {
+  return fake.requestClose();
 }
 
 export async function setWindowTheme(/* theme */) {}

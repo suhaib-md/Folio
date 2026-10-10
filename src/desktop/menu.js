@@ -1,7 +1,9 @@
 // Popup menu (the toolbar's ⋯ menu).
 //
 // openMenu(anchor, items) -> { close() }
-// items: ({ label, checked?, radio?, disabled?, submenu?, onSelect } | 'separator')[]
+// items: ({ label, key?, danger?, checked?, radio?, disabled?, submenu?, onSelect } | 'separator')[]
+//   key: a shortcut shown at the right (text only; the app handles the keys);
+//   danger: a destructive item (drawn in the danger colour).
 //   checked (boolean) makes a menuitemcheckbox with aria-checked (or a
 //   menuitemradio when radio: true);
 //   submenu (items) makes a menuitem with aria-haspopup="menu".
@@ -11,7 +13,7 @@
 // stays live, but main.js closes the menu on any app shortcut (closeMenu).
 // `{ at: { x, y } }` opens it at that point (a context menu) instead of under
 // the anchor, and re-opening on the same anchor then re-opens instead of
-// toggling.
+// toggling. `{ className }` adds a class to the root menu (e.g. a fixed width).
 let active = null;
 
 const enabledItems = (levelEl) =>
@@ -25,7 +27,7 @@ export function closeMenu() {
   if (active) active.close();
 }
 
-export function openMenu(anchor, items, { at = null } = {}) {
+export function openMenu(anchor, items, { at = null, className = '' } = {}) {
   if (active) {
     const same = active.anchor === anchor;
     active.close();
@@ -78,6 +80,8 @@ export function openMenu(anchor, items, { at = null } = {}) {
   function buildLevel(list, owner) {
     const el = d.createElement('div');
     el.className = 'menu';
+    // No checkable items: no empty check-mark column either.
+    if (!list.some((i) => i !== 'separator' && typeof i.checked === 'boolean')) el.classList.add('menu-plain');
     el.setAttribute('role', 'menu');
     el.addEventListener('keydown', onKey);
     for (const item of list) {
@@ -104,6 +108,14 @@ export function openMenu(anchor, items, { at = null } = {}) {
       label.className = 'menu-label';
       label.textContent = item.label;
       row.append(mark, label);
+      if (item.danger) row.classList.add('danger');
+      if (item.key) {
+        const key = d.createElement('span');
+        key.className = 'menu-key';
+        key.setAttribute('aria-hidden', 'true');
+        key.textContent = item.key;
+        row.append(key);
+      }
       if (item.submenu) {
         row.setAttribute('aria-haspopup', 'menu');
         row.setAttribute('aria-expanded', 'false');
@@ -215,6 +227,7 @@ export function openMenu(anchor, items, { at = null } = {}) {
   const onResize = () => close();
 
   const root = buildLevel(items, null);
+  if (className) root.classList.add(...className.split(/\s+/).filter(Boolean));
   levels.push({ el: root, owner: null });
   if (!at) anchor.setAttribute('aria-expanded', 'true');
   const ar = anchor.getBoundingClientRect();

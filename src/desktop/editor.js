@@ -3,7 +3,8 @@
 import { EditorState, EditorSelection, Prec } from '@codemirror/state';
 import {
   EditorView, keymap, highlightSpecialChars, drawSelection, dropCursor,
-  rectangularSelection, crosshairCursor, highlightActiveLine,
+  rectangularSelection, crosshairCursor, highlightActiveLine, lineNumbers,
+  highlightActiveLineGutter,
 } from '@codemirror/view';
 import {
   indentOnInput, syntaxHighlighting, bracketMatching, foldKeymap, HighlightStyle,
@@ -15,8 +16,8 @@ import {
 } from '@codemirror/autocomplete';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
-import { tags as t } from '@lezer/highlight';
-import { toggleWrap, insertLink } from './format.js';
+import { tags as t, Tag, styleTags } from '@lezer/highlight';
+import { toggleWrap, insertLink, cycleHeading, toggleTask } from './format.js';
 
 // Colours come from the theme variables (src/styles.css, plus the forced
 // themes in app.css), so light, dark and the manual theme need no
@@ -24,98 +25,121 @@ import { toggleWrap, insertLink } from './format.js';
 const mix = (v, pct) => `color-mix(in srgb, var(${v}) ${pct}%, transparent)`;
 
 const theme = EditorView.theme({
-  '&': { height: '100%', color: 'var(--fg)', backgroundColor: 'var(--bg)' },
+  '&': { height: '100%', color: 'var(--ink)', backgroundColor: 'var(--paper)' },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
-    fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
+    fontFamily: 'var(--font-mono)',
     fontSize: 'calc(14px * var(--doc-zoom, 1))',
-    lineHeight: '1.6',
+    lineHeight: '1.75',
   },
-  // Same readable column as the Read view; Split panes are narrower anyway.
   '.cm-content': {
     boxSizing: 'border-box',
-    width: '100%',
-    maxWidth: '760px',
-    margin: '0 auto',
-    padding: '32px 16px 96px',
-    caretColor: 'var(--fg)',
+    padding: '28px 24px 80px 0',
+    caretColor: 'var(--accent)',
   },
   '.cm-line': { padding: '0' },
-  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--fg)' },
-  '.cm-selectionBackground': { backgroundColor: mix('--muted', 22) },
+  '.cm-gutters': {
+    width: '56px',
+    border: '0',
+    backgroundColor: 'transparent',
+    color: 'var(--ink-3)',
+  },
+  '.cm-gutter.cm-lineNumbers': { width: '56px' },
+  '.cm-lineNumbers .cm-gutterElement': {
+    boxSizing: 'border-box',
+    padding: '0 20px 0 0',
+    fontSize: 'calc(12px * var(--doc-zoom, 1))',
+    textAlign: 'right',
+  },
+  '.cm-activeLineGutter': { backgroundColor: 'var(--caretline)', color: 'var(--ink-2)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeft: '2px solid var(--accent)' },
+  '.cm-selectionBackground': { backgroundColor: mix('--ink-3', 22) },
   '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, ::selection': {
-    backgroundColor: mix('--accent', 28),
+    backgroundColor: mix('--accent', 24),
   },
-  '.cm-activeLine': { backgroundColor: mix('--fg', 4) },
-  '.cm-selectionMatch': { backgroundColor: mix('--accent', 14) },
-  '.cm-searchMatch': {
-    backgroundColor: mix('--hl-variable', 25),
-    outline: `1px solid ${mix('--hl-variable', 60)}`,
-  },
-  '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: mix('--accent', 35) },
-  '&.cm-focused .cm-matchingBracket': { backgroundColor: mix('--accent', 20), outline: 'none' },
-  '&.cm-focused .cm-nonmatchingBracket': { backgroundColor: 'var(--danger-bg)' },
-  '.cm-panels': { backgroundColor: 'var(--subtle)', color: 'var(--fg)' },
-  '.cm-panels.cm-panels-top': { borderBottom: '1px solid var(--border)' },
-  '.cm-panels.cm-panels-bottom': { borderTop: '1px solid var(--border)' },
-  '.cm-panel.cm-search': { padding: '6px 32px 6px 12px', fontSize: '13px' },
-  '.cm-panel.cm-search label': { fontSize: '13px' },
+  '.cm-activeLine': { backgroundColor: 'var(--caretline)' },
+  '.cm-selectionMatch': { backgroundColor: 'var(--accent-soft)' },
+  '.cm-searchMatch': { backgroundColor: 'var(--find)' },
+  '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'var(--find-cur)' },
+  '&.cm-focused .cm-matchingBracket': { backgroundColor: 'var(--accent-soft)', outline: 'none' },
+  '&.cm-focused .cm-nonmatchingBracket': { color: 'var(--danger)', backgroundColor: 'transparent' },
+  '.cm-panels': { backgroundColor: 'var(--raised)', color: 'var(--ink)' },
+  '.cm-panels.cm-panels-top': { borderBottom: '1px solid var(--line)' },
+  '.cm-panels.cm-panels-bottom': { borderTop: '1px solid var(--line)' },
+  '.cm-panel.cm-search': { padding: '8px 36px 8px 12px', fontFamily: 'var(--font-ui)', fontSize: '13px' },
+  '.cm-panel.cm-search label': { fontSize: '12px', color: 'var(--ink-2)' },
   '.cm-panel.cm-search [name=close]': {
-    color: 'var(--muted)', fontSize: '18px', top: '4px', right: '8px',
+    color: 'var(--ink-3)', fontSize: '18px', top: '6px', right: '10px',
   },
   '.cm-textfield': {
     font: 'inherit',
     fontSize: '13px',
-    padding: '3px 6px',
-    color: 'var(--fg)',
-    backgroundColor: 'var(--bg)',
-    border: '1px solid var(--border)',
-    borderRadius: '4px',
+    height: '28px',
+    padding: '0 8px',
+    color: 'var(--ink)',
+    backgroundColor: 'var(--paper)',
+    border: '1px solid var(--line)',
+    borderRadius: '7px',
   },
-  '.cm-textfield:focus': { outline: '2px solid var(--accent)', outlineOffset: '-1px' },
+  '.cm-textfield:focus': { outline: 'none', borderColor: 'var(--accent)', boxShadow: '0 0 0 3px var(--accent-soft)' },
   '.cm-button': {
     font: 'inherit',
-    fontSize: '13px',
-    padding: '3px 10px',
-    color: 'var(--fg)',
+    fontSize: '12px',
+    fontWeight: '500',
+    height: '28px',
+    padding: '0 10px',
+    color: 'var(--ink)',
     backgroundImage: 'none',
-    backgroundColor: 'var(--bg)',
-    border: '1px solid var(--border)',
-    borderRadius: '4px',
-  },
-  '.cm-button:active': { backgroundImage: 'none', backgroundColor: 'var(--subtle)' },
-  '.cm-tooltip': {
-    color: 'var(--fg)',
-    backgroundColor: 'var(--bg)',
-    border: '1px solid var(--border)',
+    backgroundColor: 'var(--paper)',
+    border: '1px solid var(--line-strong)',
     borderRadius: '6px',
   },
+  '.cm-button:active': { backgroundImage: 'none', backgroundColor: 'var(--hover)' },
+  '.cm-tooltip': {
+    color: 'var(--ink)',
+    backgroundColor: 'var(--raised)',
+    border: '1px solid var(--line)',
+    borderRadius: '8px',
+    boxShadow: 'var(--shadow)',
+  },
   '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
-    color: 'var(--accent-fg)',
-    backgroundColor: 'var(--accent)',
+    color: 'var(--ink)',
+    backgroundColor: 'var(--accent-soft)',
   },
 });
 
+// Markdown marks get their own tags (the base language files every mark
+// under processingInstruction): fences stay quiet, table rows dim.
+const codeMark = Tag.define();
+const tableText = Tag.define();
+const markdownTags = {
+  props: [styleTags({ CodeMark: codeMark, 'Table/...': tableText, 'TableDelimiter': tableText })],
+};
+
 const highlight = HighlightStyle.define([
-  { tag: t.heading, fontWeight: '600', color: 'var(--hl-title)' },
+  { tag: t.heading, fontWeight: '600', color: 'var(--ink)' },
+  // Heading marks, list and task markers, quote marks, link brackets.
+  { tag: t.processingInstruction, color: 'var(--accent-text)', fontWeight: '500' },
+  { tag: codeMark, color: 'var(--ink-3)' },
   { tag: t.strong, fontWeight: '600' },
   { tag: t.emphasis, fontStyle: 'italic' },
   { tag: t.strikethrough, textDecoration: 'line-through' },
-  { tag: t.link, color: 'var(--accent)' },
-  { tag: t.url, color: 'var(--accent)', textDecoration: 'underline' },
-  { tag: t.monospace, color: 'var(--hl-variable)' },
-  { tag: t.quote, color: 'var(--muted)' },
-  { tag: [t.processingInstruction, t.contentSeparator, t.meta], color: 'var(--hl-comment)' },
-  { tag: t.comment, color: 'var(--hl-comment)', fontStyle: 'italic' },
+  { tag: t.link, color: 'var(--accent-text)' },
+  { tag: t.url, color: 'var(--accent-text)' },
+  { tag: t.monospace, color: 'var(--hl-str)' },
+  { tag: t.quote, color: 'var(--ink-2)', fontStyle: 'italic' },
+  { tag: tableText, color: 'var(--ink-2)' },
+  { tag: [t.contentSeparator, t.meta], color: 'var(--ink-3)' },
+  { tag: t.comment, color: 'var(--hl-com)' },
   // Fenced code, via the nested language parsers.
-  { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword], color: 'var(--hl-keyword)' },
-  { tag: [t.string, t.special(t.string), t.regexp, t.escape], color: 'var(--hl-string)' },
-  { tag: [t.number, t.bool, t.atom, t.null, t.unit, t.constant(t.name)], color: 'var(--hl-number)' },
-  { tag: [t.function(t.variableName), t.function(t.propertyName), t.definition(t.function(t.variableName))], color: 'var(--hl-title)' },
-  { tag: [t.typeName, t.className, t.namespace], color: 'var(--hl-variable)' },
-  { tag: [t.propertyName, t.attributeName], color: 'var(--hl-attr)' },
-  { tag: [t.tagName, t.angleBracket], color: 'var(--hl-tag)' },
-  { tag: t.invalid, color: 'var(--danger-fg)' },
+  { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword], color: 'var(--hl-kw)' },
+  { tag: [t.string, t.special(t.string), t.regexp, t.escape], color: 'var(--hl-str)' },
+  { tag: [t.number, t.bool, t.atom, t.null, t.unit, t.constant(t.name)], color: 'var(--hl-fn)' },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.definition(t.function(t.variableName))], color: 'var(--hl-fn)' },
+  { tag: [t.typeName, t.className, t.namespace], color: 'var(--hl-fn)' },
+  { tag: [t.propertyName, t.attributeName], color: 'var(--hl-fn)' },
+  { tag: [t.tagName, t.angleBracket], color: 'var(--accent-text)' },
+  { tag: t.invalid, color: 'var(--danger)' },
 ]);
 
 // Ctrl+B / Ctrl+I / Ctrl+K: one transaction each, so one undo step.
@@ -136,15 +160,27 @@ function formatCommand(fn) {
   };
 }
 
+// The doc header's format buttons, by name (also the palette's commands).
+const FORMATS = {
+  heading: formatCommand(cycleHeading),
+  bold: formatCommand((d, r) => toggleWrap(d, r, '**')),
+  italic: formatCommand((d, r) => toggleWrap(d, r, '*')),
+  link: formatCommand(insertLink),
+  code: formatCommand((d, r) => toggleWrap(d, r, '`')),
+  task: formatCommand(toggleTask),
+};
+
 const formatKeymap = Prec.highest(keymap.of([
-  { key: 'Mod-b', run: formatCommand((d, r) => toggleWrap(d, r, '**')), preventDefault: true },
-  { key: 'Mod-i', run: formatCommand((d, r) => toggleWrap(d, r, '*')), preventDefault: true },
-  { key: 'Mod-k', run: formatCommand(insertLink), preventDefault: true },
+  { key: 'Mod-b', run: FORMATS.bold, preventDefault: true },
+  { key: 'Mod-i', run: FORMATS.italic, preventDefault: true },
+  { key: 'Mod-k', run: FORMATS.link, preventDefault: true },
 ]));
 
-// codemirror's basicSetup, minus lineNumbers, foldGutter and
-// highlightActiveLineGutter (and lintKeymap: there is no linter).
+// codemirror's basicSetup, minus foldGutter (and lintKeymap: there is no
+// linter).
 const setup = [
+  lineNumbers(),
+  highlightActiveLineGutter(),
   highlightSpecialChars(),
   history(),
   drawSelection(),
@@ -187,6 +223,7 @@ export function createEditor(parent, { onChange, onCursor = () => {}, onPasteIma
   let current = null; // tab id whose state is in the view
   let pending = null; // { timer, since } while a batched onChange is due
   let cursorAt = 0; // line the cursor was last seen on (0: unknown)
+  let colAt = 0; // its 1-based column
   let cursorFrame = 0; // requestAnimationFrame id while an onCursor is due
 
   function flush() {
@@ -216,7 +253,7 @@ export function createEditor(parent, { onChange, onCursor = () => {}, onPasteIma
     setup,
     // GFM (tables, task lists, strikethrough) like the renderer. Fenced code
     // languages load on demand (dynamic import -> separate bundle chunks).
-    markdown({ base: markdownLanguage, codeLanguages: languages }),
+    markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [markdownTags] }),
     EditorView.lineWrapping,
     EditorView.contentAttributes.of({ 'aria-label': 'Markdown source', spellcheck: 'false' }),
     theme,
@@ -246,14 +283,17 @@ export function createEditor(parent, { onChange, onCursor = () => {}, onPasteIma
     EditorView.updateListener.of((u) => {
       if (u.docChanged && current != null) changed(u.state.doc);
       if ((u.selectionSet || u.docChanged) && current != null) {
-        const line = u.state.doc.lineAt(u.state.selection.main.head).number;
-        if (line !== cursorAt) {
-          cursorAt = line;
-          // One call per animation frame, with the line it ended on.
+        const head = u.state.selection.main.head;
+        const l = u.state.doc.lineAt(head);
+        const col = head - l.from + 1;
+        if (l.number !== cursorAt || col !== colAt) {
+          cursorAt = l.number;
+          colAt = col;
+          // One call per animation frame, with the position it ended on.
           if (!cursorFrame) {
             cursorFrame = requestAnimationFrame(() => {
               cursorFrame = 0;
-              if (current != null) onCursor(cursorAt);
+              if (current != null) onCursor(cursorAt, colAt);
             });
           }
         }
@@ -305,6 +345,7 @@ export function createEditor(parent, { onChange, onCursor = () => {}, onPasteIma
       park();
       current = tabId;
       cursorAt = 0;
+      colAt = 0;
       const cached = states.get(tabId);
       const fresh = !cached || !sameDoc(cached, text);
       view.setState(fresh ? newState(text) : cached);
@@ -330,6 +371,23 @@ export function createEditor(parent, { onChange, onCursor = () => {}, onPasteIma
 
     // 1-based line of the cursor.
     cursorLine: () => view.state.doc.lineAt(view.state.selection.main.head).number,
+
+    // 1-based line and column of the cursor.
+    cursorPos() {
+      const head = view.state.selection.main.head;
+      const l = view.state.doc.lineAt(head);
+      return { line: l.number, col: head - l.from + 1 };
+    },
+
+    // Applies a doc header format (heading, bold, italic, link, code, task)
+    // and gives the editor focus back.
+    format(name) {
+      const run = FORMATS[name];
+      if (!run || current == null) return false;
+      run(view);
+      view.focus();
+      return true;
+    },
 
     // Cursor to the start of `line` (clamped), scrolled to the top of the
     // editor. Does not take focus.

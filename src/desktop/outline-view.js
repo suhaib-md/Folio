@@ -42,18 +42,9 @@ export function renderOutline(container, outline, { current = -1, collapsed, onJ
 
       const parent = node.children.length > 0;
       const open = parent && !collapsed.has(node.index);
-      const twisty = d.createElement('button');
-      twisty.type = 'button';
-      twisty.className = 'outline-twisty';
-      twisty.tabIndex = -1;
-      if (parent) {
-        twisty.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${node.text}`);
-        twisty.setAttribute('aria-expanded', String(open));
-        twisty.addEventListener('click', () => onToggle(node.index));
-      } else {
-        twisty.disabled = true;
-        twisty.setAttribute('aria-hidden', 'true');
-      }
+      const bar = d.createElement('span');
+      bar.className = 'outline-bar';
+      bar.setAttribute('aria-hidden', 'true');
 
       const item = d.createElement('button');
       item.type = 'button';
@@ -66,10 +57,30 @@ export function renderOutline(container, outline, { current = -1, collapsed, onJ
       if (parent) item.setAttribute('aria-expanded', String(open));
       if (node.index === current) {
         item.classList.add('active');
+        row.classList.add('active');
         item.setAttribute('aria-current', 'location');
       }
       item.addEventListener('click', () => onJump(node));
-      row.append(twisty, item);
+      row.addEventListener('click', (e) => {
+        if (e.target === row || e.target === bar) onJump(node);
+      });
+
+      // The heading level at the right; on a heading with sub-headings it
+      // also collapses / expands them.
+      const level = d.createElement(parent ? 'button' : 'span');
+      level.className = `outline-level${parent ? ' outline-twisty' : ''}`;
+      level.textContent = `H${node.level}`;
+      if (parent) {
+        level.type = 'button';
+        level.tabIndex = -1;
+        level.title = open ? 'Collapse' : 'Expand';
+        level.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${node.text}`);
+        level.setAttribute('aria-expanded', String(open));
+        level.addEventListener('click', () => onToggle(node.index));
+      } else {
+        level.setAttribute('aria-hidden', 'true');
+      }
+      row.append(bar, item, level);
       li.append(row);
       if (open) {
         const sub = d.createElement('ul');

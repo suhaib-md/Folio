@@ -39,6 +39,9 @@ pub struct Settings {
     pub zoom: u32,
     pub theme: String,
     pub autosave: bool,
+    /// Reading font for rendered documents: "serif" or "sans".
+    #[serde(rename = "docFont")]
+    pub doc_font: String,
     pub sidebar: Sidebar,
     pub session: Session,
 }
@@ -49,6 +52,7 @@ impl Default for Settings {
             zoom: 100,
             theme: "system".into(),
             autosave: false,
+            doc_font: "serif".into(),
             sidebar: Sidebar::default(),
             session: Session::default(),
         }
@@ -99,6 +103,7 @@ mod tests {
         assert_eq!(parse(r#"{"sidebar": {"visible": false}}"#), Some(false));
         let json = serde_json::to_string(&Settings::default()).unwrap();
         assert!(json.contains(r#""visible":null"#), "{json}");
+        assert!(json.contains(r#""docFont":"serif""#), "{json}");
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back, Settings::default());
     }
@@ -122,6 +127,7 @@ mod tests {
         assert!(s.autosave);
         assert_eq!(s.zoom, 100);
         assert_eq!(s.theme, "system");
+        assert_eq!(s.doc_font, "serif");
         assert_eq!(s.sidebar.visible, None);
         assert_eq!(s.sidebar.tab, "outline");
         assert_eq!(s.session.active.as_deref(), Some("/a.md"));
@@ -135,6 +141,7 @@ mod tests {
             zoom: 120,
             theme: "dark".into(),
             autosave: true,
+            doc_font: "sans".into(),
             ..Settings::default()
         };
         s.session.tabs.push(SessionTab { path: "/a.md".into(), mode: "edit".into() });
