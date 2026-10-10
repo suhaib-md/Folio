@@ -25,11 +25,15 @@ fn name_of(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-/// Walks `dir` depth-first. Returns the included children; sets `truncated`
-/// once a file beyond `limit` is found, after which the walk stops.
-fn walk(dir: &Path, limit: usize, count: &mut usize, truncated: &mut bool) -> Vec<TreeNode> {
-    let mut dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
-    let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
+type Entry = (String, std::path::PathBuf);
+
+/// The included subfolders and Markdown files of `dir`, each sorted
+/// case-insensitively. Shared by the tree lister and folder search so both
+/// apply the same skip rules (dot names, node_modules, `.md`/`.markdown`
+/// only, symlinked folders not followed).
+pub(crate) fn list_dir(dir: &Path) -> (Vec<Entry>, Vec<Entry>) {
+    let mut dirs: Vec<Entry> = Vec::new();
+    let mut files: Vec<Entry> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -47,9 +51,16 @@ fn walk(dir: &Path, limit: usize, count: &mut usize, truncated: &mut bool) -> Ve
             }
         }
     }
-    let key = |a: &(String, std::path::PathBuf)| (a.0.to_lowercase(), a.0.clone());
+    let key = |a: &Entry| (a.0.to_lowercase(), a.0.clone());
     dirs.sort_by_key(key);
     files.sort_by_key(key);
+    (dirs, files)
+}
+
+/// Walks `dir` depth-first. Returns the included children; sets `truncated`
+/// once a file beyond `limit` is found, after which the walk stops.
+fn walk(dir: &Path, limit: usize, count: &mut usize, truncated: &mut bool) -> Vec<TreeNode> {
+    let (dirs, files) = list_dir(dir);
 
     let mut out = Vec::new();
     for (name, path) in dirs {

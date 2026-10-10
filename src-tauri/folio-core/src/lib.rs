@@ -1,4 +1,11 @@
+pub mod atomic;
+pub mod drafts;
+pub mod fileops;
 pub mod files;
+pub mod image;
+pub mod paths;
 pub mod recent;
+pub mod search;
+pub mod settings;
 pub mod tree;
 pub mod watch;

@@ -1,6 +1,6 @@
 // CodeMirror 6 wrapper. One EditorView, one EditorState per tab id: switching
 // tabs swaps states, so each tab keeps its own undo history and selection.
-import { EditorState } from '@codemirror/state';
+import { EditorState, EditorSelection, Prec } from '@codemirror/state';
 import {
   EditorView, keymap, highlightSpecialChars, drawSelection, dropCursor,
   rectangularSelection, crosshairCursor, highlightActiveLine,
@@ -16,9 +16,11 @@ import {
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { tags as t } from '@lezer/highlight';
+import { toggleWrap, insertLink } from './format.js';
 
-// Colours come from the theme variables in src/styles.css, so light and dark
-// follow prefers-color-scheme with no editor-side switching.
+// Colours come from the theme variables (src/styles.css, plus the forced
+// themes in app.css), so light, dark and the manual theme need no
+// editor-side switching; font size scales with --doc-zoom.
 const mix = (v, pct) => `color-mix(in srgb, var(${v}) ${pct}%, transparent)`;
 
 const theme = EditorView.theme({
@@ -26,7 +28,7 @@ const theme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
-    fontSize: '14px',
+    fontSize: 'calc(14px * var(--doc-zoom, 1))',
     lineHeight: '1.6',
   },
   // Same readable column as the Read view; Split panes are narrower anyway.
@@ -116,6 +118,30 @@ const highlight = HighlightStyle.define([
   { tag: t.invalid, color: 'var(--danger-fg)' },
 ]);
 
+// Ctrl+B / Ctrl+I / Ctrl+K: one transaction each, so one undo step.
+function formatCommand(fn) {
+  return (view) => {
+    const { state } = view;
+    const r = fn(state.doc.toString(), state.selection.ranges.map((x) => ({ from: x.from, to: x.to })));
+    view.dispatch({
+      changes: r.changes,
+      selection: EditorSelection.create(
+        r.ranges.map((x) => EditorSelection.range(x.from, x.to)),
+        state.selection.mainIndex,
+      ),
+      userEvent: 'input.format',
+      scrollIntoView: true,
+    });
+    return true;
+  };
+}
+
+const formatKeymap = Prec.highest(keymap.of([
+  { key: 'Mod-b', run: formatCommand((d, r) => toggleWrap(d, r, '**')), preventDefault: true },
+  { key: 'Mod-i', run: formatCommand((d, r) => toggleWrap(d, r, '*')), preventDefault: true },
+  { key: 'Mod-k', run: formatCommand(insertLink), preventDefault: true },
+]));
+
 // codemirror's basicSetup, minus lineNumbers, foldGutter and
 // highlightActiveLineGutter (and lintKeymap: there is no linter).
 const setup = [
@@ -133,6 +159,7 @@ const setup = [
   crosshairCursor(),
   highlightActiveLine(),
   highlightSelectionMatches(),
+  formatKeymap,
   keymap.of([
     ...closeBracketsKeymap,
     ...defaultKeymap,
@@ -150,11 +177,17 @@ const LAZY_LENGTH = 256 * 1024;
 const PAUSE = 250;
 const MAX_WAIT = 1000;
 
-export function createEditor(parent, { onChange }) {
+// A paste that carries an image and no text (a screenshot) goes to
+// onPasteImage(blob) -> Promise<markdown|null>; the markdown replaces the main
+// selection, unless the user has switched tabs meanwhile. Pasting text (also
+// text together with an image, as copying from a web page gives) is untouched.
+export function createEditor(parent, { onChange, onCursor = () => {}, onPasteImage = null }) {
   const states = new Map(); // tab id -> EditorState (tabs not on screen)
   const scrolls = new Map(); // tab id -> scroll snapshot effect
   let current = null; // tab id whose state is in the view
   let pending = null; // { timer, since } while a batched onChange is due
+  let cursorAt = 0; // line the cursor was last seen on (0: unknown)
+  let cursorFrame = 0; // requestAnimationFrame id while an onCursor is due
 
   function flush() {
     if (!pending) return;
@@ -187,8 +220,44 @@ export function createEditor(parent, { onChange }) {
     EditorView.lineWrapping,
     EditorView.contentAttributes.of({ 'aria-label': 'Markdown source', spellcheck: 'false' }),
     theme,
+    EditorView.domEventHandlers({
+      paste(event, v) {
+        if (!onPasteImage) return false;
+        const items = [...(event.clipboardData?.items || [])];
+        if (items.some((i) => i.kind === 'string' && i.type === 'text/plain')) return false;
+        const item = items.find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+        const blob = item?.getAsFile();
+        if (!blob) return false;
+        event.preventDefault();
+        const tabId = current;
+        Promise.resolve(onPasteImage(blob)).then((md) => {
+          if (!md || current !== tabId) return;
+          const { from, to } = v.state.selection.main;
+          v.dispatch({
+            changes: { from, to, insert: md },
+            selection: { anchor: from + md.length },
+            userEvent: 'input.paste',
+            scrollIntoView: true,
+          });
+        });
+        return true;
+      },
+    }),
     EditorView.updateListener.of((u) => {
       if (u.docChanged && current != null) changed(u.state.doc);
+      if ((u.selectionSet || u.docChanged) && current != null) {
+        const line = u.state.doc.lineAt(u.state.selection.main.head).number;
+        if (line !== cursorAt) {
+          cursorAt = line;
+          // One call per animation frame, with the line it ended on.
+          if (!cursorFrame) {
+            cursorFrame = requestAnimationFrame(() => {
+              cursorFrame = 0;
+              if (current != null) onCursor(cursorAt);
+            });
+          }
+        }
+      }
     }),
   ];
   const newState = (text) => EditorState.create({ doc: text, extensions });
@@ -235,6 +304,7 @@ export function createEditor(parent, { onChange }) {
       }
       park();
       current = tabId;
+      cursorAt = 0;
       const cached = states.get(tabId);
       const fresh = !cached || !sameDoc(cached, text);
       view.setState(fresh ? newState(text) : cached);
@@ -258,11 +328,40 @@ export function createEditor(parent, { onChange }) {
     focus: () => view.focus(),
     openSearch: () => openSearchPanel(view),
 
+    // 1-based line of the cursor.
+    cursorLine: () => view.state.doc.lineAt(view.state.selection.main.head).number,
+
+    // Cursor to the start of `line` (clamped), scrolled to the top of the
+    // editor. Does not take focus.
+    revealLine(line) {
+      const doc = view.state.doc;
+      const pos = doc.line(Math.min(Math.max(1, Math.floor(line) || 1), doc.lines)).from;
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 8 }),
+      });
+    },
+
+    // Selects characters [start, end) of `line` (offsets within that line,
+    // clamped) and scrolls them into view. Does not take focus.
+    selectRange(line, start, end) {
+      const doc = view.state.doc;
+      const l = doc.line(Math.min(Math.max(1, Math.floor(line) || 1), doc.lines));
+      const at = (n) => l.from + Math.min(Math.max(0, n), l.length);
+      const from = at(start);
+      const to = Math.max(from, at(end));
+      view.dispatch({
+        selection: { anchor: from, head: to },
+        effects: EditorView.scrollIntoView(from, { y: 'center' }),
+      });
+    },
+
     destroyState(tabId) {
       states.delete(tabId);
       scrolls.delete(tabId);
       if (current === tabId) {
         dropPending();
+        cursorAt = 0;
         current = null;
         view.setState(newState(''));
       }

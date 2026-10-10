@@ -16,19 +16,45 @@ export function setModalHooks(next) {
   hooks = { ...hooks, ...next };
 }
 
+// For other modal dialogs (quick open): announce one opening / closing so
+// main.js holds incoming opens and blocks app shortcuts meanwhile.
+export function modalOpened() {
+  hooks.onOpen();
+}
+export function modalClosed() {
+  hooks.onClose();
+}
+
 export function confirmSave(name) {
-  const result = queue.then(() => show(name));
+  return enqueueShow({ title: `Save changes to ${name}?`, buttons: SAVE_BUTTONS });
+}
+
+// confirmAction({ title, confirmLabel, cancelLabel }) -> Promise<boolean>
+// A two-button question (first button focused; Esc = cancel), e.g. the
+// sidebar's "Move <name> to the Recycle Bin?" with Delete / Cancel.
+export function confirmAction({ title, confirmLabel, cancelLabel = 'Cancel' }) {
+  return enqueueShow({
+    title,
+    buttons: [
+      { value: 'confirm', label: confirmLabel, primary: true },
+      { value: 'cancel', label: cancelLabel },
+    ],
+  }).then((v) => v === 'confirm');
+}
+
+function enqueueShow(spec) {
+  const result = queue.then(() => show(spec));
   queue = result.catch(() => {});
   return result;
 }
 
-const BUTTONS = [
+const SAVE_BUTTONS = [
   { value: 'save', label: 'Save', primary: true },
   { value: 'discard', label: "Don't save" },
   { value: 'cancel', label: 'Cancel' },
 ];
 
-function show(name) {
+function show({ title: titleText, buttons: BUTTONS }) {
   return new Promise((resolve) => {
     const id = `modal-title-${++seq}`;
     const previous = document.activeElement;
@@ -45,7 +71,7 @@ function show(name) {
     const title = document.createElement('h2');
     title.className = 'modal-title';
     title.id = id;
-    title.textContent = `Save changes to ${name}?`;
+    title.textContent = titleText;
 
     const actions = document.createElement('div');
     actions.className = 'modal-actions';

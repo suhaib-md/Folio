@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { createRenderer } from '../src/render.js';
+import { bestOf } from './perf-budget.mjs';
 
 const render = createRenderer(new JSDOM('').window);
 
@@ -88,19 +89,12 @@ test('strips style and forms', () => {
 test('render time grows linearly with document size', () => {
   const doc = (n) => Array.from({ length: n }, (_, i) =>
     `## S${i}\n\nText *em* \`c\`.\n\n- a\n- b\n\n\`\`\`js\nlet x = ${i};\n\`\`\`\n`).join('\n');
-  const time = (s) => {
-    const t = performance.now();
-    render(s);
-    return performance.now() - t;
-  };
   const small = doc(1000);
   const big = doc(4000);
-  render(small); // warm up
-  // Best of 3 per size: shared CI runners have noisy neighbours.
-  const best = (s) => Math.min(time(s), time(s), time(s));
-  render(big); // warm up
-  const a = best(small);
-  const b = best(big);
+  // Warm-up plus best of 3 per size: shared CI runners have noisy neighbours.
+  // A ratio needs no budget() scaling; it holds regardless of machine speed.
+  const a = bestOf(3, () => render(small));
+  const b = bestOf(3, () => render(big));
   // 4x the input: linear is ~4x the time, the old walkTokens path was ~16x.
   assert.ok(b < a * 8, `4x input took ${(b / a).toFixed(1)}x the time (${a.toFixed(0)} -> ${b.toFixed(0)} ms)`);
 });

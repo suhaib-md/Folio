@@ -15,12 +15,15 @@ Open `folio.html` in Edge or Chrome, then click **Open file**, press
 Folio also ships as a Windows desktop app: double-click a `.md` file to read
 it, edit it, and keep a folder sidebar.
 
+**[⬇ Download the latest Windows installer](https://github.com/suhaib-md/Folio/releases/latest)**
+
 **Install**
 
-1. Download the `Folio-installer` artifact from the latest successful run
-   under the repo's *Actions* tab (or the installer from a GitHub Release
-   once a `v*` tag is published), and unzip it.
-2. Run `Folio_0.2.0_x64-setup.exe`. It installs per-user, no admin needed.
+1. On the [latest release](https://github.com/suhaib-md/Folio/releases/latest),
+   download `Folio_<version>_x64-setup.exe` under *Assets*. (Before the first
+   release is published, use the `Folio-installer` artifact from the latest
+   successful run under the repo's *Actions* tab, and unzip it.)
+2. Run the installer. It installs per-user, no admin needed.
 3. The installer isn't code-signed, so SmartScreen may warn: click
    **More info → Run anyway**.
 4. To make Folio the default: right-click a `.md` file → **Open with →
@@ -32,7 +35,26 @@ it, edit it, and keep a folder sidebar.
 - Read, Edit (CodeMirror) and side-by-side Split modes
 - Saves keep the file's line endings (LF/CRLF) and BOM
 - Reloads when a file changes on disk; prompts before closing unsaved work
-- Folder sidebar, recent files and folders, relative images
+- Sidebar with Files, Outline and Search tabs; recent files and folders;
+  relative images
+- Outline of the document's headings, with the current section highlighted
+- Find in Read mode (Ctrl+F), with match count and match-case
+- Quick open (Ctrl+P): fuzzy file finder over the open folder
+- Search across the folder (Ctrl+Shift+F)
+- `other.md#section` links scroll to the section
+- Formatting shortcuts: bold, italic, link
+- Paste an image into the editor: it is saved next to the file and linked
+- Word count and reading time
+- Crash recovery: unsaved edits are kept as drafts and offered back on the
+  next launch
+- Optional autosave (⋯ menu)
+- Zoom (Ctrl+= / Ctrl+- / Ctrl+0) and a System / Light / Dark theme
+- Mermaid diagrams and KaTeX maths (`$…$`, `$$…$$`), bundled, offline
+- Export to a standalone HTML file, and print (or save as PDF)
+- Session restore: reopens your tabs, folder and sidebar
+- File operations in the sidebar: new file/folder, rename, delete (to the
+  Recycle Bin), show in Explorer
+- Auto-update from GitHub Releases
 
 **Keyboard shortcuts**
 
@@ -47,8 +69,27 @@ it, edit it, and keep a folder sidebar.
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+E | Read ↔ Edit |
 | Ctrl+\ | Split |
-| Ctrl+B | Sidebar |
-| Ctrl+F | Find (in Edit/Split) |
+| Ctrl+Shift+B | Sidebar |
+| Ctrl+Shift+L | Outline |
+| Ctrl+Shift+F | Search folder |
+| Ctrl+P | Quick open |
+| Ctrl+F | Find |
+| Ctrl+B | Bold (editor) |
+| Ctrl+I | Italic (editor) |
+| Ctrl+K | Link (editor) |
+| Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / reset |
+| F5 / Ctrl+R | Do nothing (so a reload can't lose edits) |
+
+Print and Export HTML are in the ⋯ menu.
+
+**Updates**
+
+Folio checks GitHub Releases for a newer version 10 seconds after it starts.
+If there is one, a banner offers **Install and restart** (it downloads and
+verifies the package first, then asks about unsaved work). You can also use
+**Check for updates…** in the ⋯ menu. Update packages are signed; the
+one-time key setup is in [docs/updater-setup.md](docs/updater-setup.md).
+The updater only sees **published** releases, not drafts.
 
 A manual test list is in `docs/desktop-install-checklist.md`.
 
@@ -67,24 +108,49 @@ npm test
 ```bash
 npm ci
 npx tauri build
-# installer: src-tauri/target/release/bundle/nsis/Folio_0.2.0_x64-setup.exe
+# installer: src-tauri/target/release/bundle/nsis/Folio_0.3.0_x64-setup.exe
 ```
 
 CI (`.github/workflows/desktop.yml`) runs the tests and builds this
 installer on every push and pull request.
 
+**Releasing**
+
+0. Commit the updater public key first
+   ([docs/updater-setup.md](docs/updater-setup.md)); the release job fails
+   without it, because installs built without it can never update.
+1. Bump the version in `package.json`, `src-tauri/Cargo.toml`,
+   `src-tauri/folio-core/Cargo.toml` and `src-tauri/tauri.conf.json`
+   (refresh the lock files), and commit.
+2. Tag and push the tag: `git tag v0.3.0 && git push origin v0.3.0`.
+3. CI builds a signed draft release with the installer, the update package
+   and `latest.json` (needs the secrets from
+   [docs/updater-setup.md](docs/updater-setup.md)).
+4. Check the draft and **publish** it. Installed copies only see published
+   releases.
+
 ## Known limitations
 
 - Web viewer: images with relative paths (`![](images/pic.png)`) don't load
   (the desktop app loads them); web (`https://`) images do. It is view-only.
-- Desktop app: Windows only, not code-signed, no auto-update, no autosave.
+- Desktop app: Windows only and not code-signed (SmartScreen warns on
+  install).
+- Mermaid diagrams and maths render in the desktop app only; the web viewer
+  shows them as plain code and text.
+- The first update check needs a published release (a draft is invisible to
+  the updater).
 
 ## Layout
 
 - `src/render.js`: Markdown → sanitised HTML (`createRenderer(window)`)
 - `src/main.js`: web viewer: open button, drag-and-drop, anchor links
 - `src/index.html`, `src/styles.css`: page template and styles
-- `src/desktop/`: desktop app UI (tabs, editor, sidebar, backend bridge)
-- `src-tauri/`: Tauri 2 app (Rust) and `folio-core` (file I/O, tree, recent)
+- `src/desktop/`: desktop app UI: tabs and editor; sidebar (files, outline,
+  search); find, quick open, formatting, paste image; crash-recovery drafts,
+  autosave, session and settings; theme, zoom, diagrams, maths, export;
+  updater; `backend.js` is the only bridge to Tauri (`fake-backend.js` is
+  the in-browser stand-in used by tests)
+- `src-tauri/`: Tauri 2 app (Rust) and `folio-core` (file I/O, tree, recent,
+  folder search, file operations, drafts, settings)
 - `build.mjs`: bundles the web viewer into one file (`--desktop`: the app UI)
 - `docs/superpowers/`: design spec and implementation plan

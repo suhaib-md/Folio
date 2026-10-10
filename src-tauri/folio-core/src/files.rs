@@ -59,18 +59,7 @@ pub fn write_file(path: &Path, text: &str, eol: Eol, bom: bool) -> Result<(), St
     }
     bytes.extend_from_slice(body.as_bytes());
 
-    let mut tmp_name = path
-        .file_name()
-        .ok_or_else(|| "invalid file path".to_string())?
-        .to_os_string();
-    tmp_name.push(".folio-tmp");
-    let tmp = path.with_file_name(tmp_name);
-
-    let result = fs::write(&tmp, &bytes).and_then(|_| fs::rename(&tmp, path));
-    if let Err(e) = result {
-        let _ = fs::remove_file(&tmp);
-        return Err(io_err(e));
-    }
+    crate::atomic::atomic_write(path, &bytes, false).map_err(io_err)?;
     Ok(())
 }
 

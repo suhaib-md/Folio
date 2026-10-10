@@ -1,7 +1,7 @@
 // Bundles src/ into one self-contained dist/folio.html.
 // With --desktop: bundles the desktop app shell into dist-desktop/ instead.
 import { build } from 'esbuild';
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 if (process.argv.includes('--desktop')) {
   await buildDesktop();
@@ -32,7 +32,13 @@ async function buildDesktop() {
   ].join('\n');
   await writeFile('dist-desktop/app.css', css);
   await copyFile('src/desktop/index.html', 'dist-desktop/index.html');
-  console.log('dist-desktop/  index.html, app.js, app.css, chunks/');
+  // KaTeX's stylesheet loads lazily (the first time maths renders); it refers
+  // to fonts/ next to itself.
+  await rm('dist-desktop/katex', { recursive: true, force: true });
+  await mkdir('dist-desktop/katex', { recursive: true });
+  await copyFile('node_modules/katex/dist/katex.min.css', 'dist-desktop/katex/katex.min.css');
+  await cp('node_modules/katex/dist/fonts', 'dist-desktop/katex/fonts', { recursive: true });
+  console.log('dist-desktop/  index.html, app.js, app.css, chunks/, katex/');
 }
 
 async function buildWeb() {

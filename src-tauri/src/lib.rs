@@ -1,18 +1,38 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use base64::Engine;
+use folio_core::drafts::{self, Draft};
+use folio_core::fileops;
 use folio_core::files::{self, Eol, ReadResult};
+use folio_core::image;
 use folio_core::recent::{Kind, Recent};
+use folio_core::search::{self, FileMatches};
+use folio_core::settings::{self, Settings};
 use folio_core::tree::{self, TreeNode};
 use folio_core::watch::{ChangeKind, WatchEvent, Watcher};
 use serde::Serialize;
 use tauri::{Manager, State};
 
 const TREE_LIMIT: usize = 5000;
+const SEARCH_LIMIT: usize = 1000;
 
 struct RecentStore {
     path: PathBuf,
     inner: Mutex<Recent>,
+}
+
+struct SettingsStore {
+    path: PathBuf,
+    inner: Mutex<Settings>,
+}
+
+/// The crash-recovery drafts directory; the lock keeps a save and a delete
+/// of the same draft from interleaving.
+struct DraftStore {
+    dir: PathBuf,
+    lock: Mutex<()>,
 }
 
 #[derive(Serialize)]
@@ -84,9 +104,80 @@ fn write_file(path: String, text: String, eol: Eol, bom: bool) -> Result<(), Str
 }
 
 #[tauri::command(async)]
+fn write_image(path: String, base64: String) -> Result<(), String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.trim())
+        .map_err(|_| "invalid image data".to_string())?;
+    image::write_image(Path::new(&path), &bytes)
+}
+
+#[tauri::command(async)]
+fn read_image(path: String) -> Result<String, String> {
+    let bytes = image::read_image(Path::new(&path))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+// The four file operations below trust the frontend for containment: they
+// accept any absolute local path (folio-core refuses relative and UNC/device
+// paths). That the target lies inside the open folder is enforced by the JS
+// guard in main.js (`insideFolder` / `inFolderOrRoot`).
+#[tauri::command(async)]
+fn create_file(path: String) -> Result<(), String> {
+    fileops::create_file(Path::new(&path))
+}
+
+#[tauri::command(async)]
+fn create_dir(path: String) -> Result<(), String> {
+    fileops::create_dir(Path::new(&path))
+}
+
+#[tauri::command(async)]
+fn rename_path(from: String, to: String) -> Result<(), String> {
+    fileops::rename_path(Path::new(&from), Path::new(&to))
+}
+
+#[tauri::command(async)]
+fn trash_path(path: String) -> Result<(), String> {
+    fileops::trash_path(Path::new(&path))
+}
+
+#[tauri::command(async)]
 fn list_tree(folder: String) -> Result<TreeResult, String> {
     let (root, truncated) = tree::list_tree(Path::new(&folder), TREE_LIMIT)?;
     Ok(TreeResult { root, truncated })
+}
+
+/// Id of the newest `search_folder` request; older running searches see it
+/// change and stop.
+#[derive(Default)]
+struct LatestSearch(AtomicU64);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchReply {
+    request_id: u64,
+    files: Vec<FileMatches>,
+    truncated: bool,
+}
+
+#[tauri::command(async)]
+fn search_folder(
+    latest: State<LatestSearch>,
+    folder: String,
+    query: String,
+    match_case: bool,
+    request_id: u64,
+) -> Result<SearchReply, String> {
+    // fetch_max: a late-running older request can never lower the id and
+    // cancel a newer one.
+    latest.0.fetch_max(request_id, Ordering::SeqCst);
+    let cancel = || latest.0.load(Ordering::SeqCst) > request_id;
+    let r = search::search_folder(Path::new(&folder), &query, match_case, SEARCH_LIMIT, &cancel)?;
+    Ok(SearchReply {
+        request_id,
+        files: r.files,
+        truncated: r.truncated,
+    })
 }
 
 /// The file/folder watcher; None if it could not be started (the app then
@@ -168,6 +259,63 @@ fn recent_remove(store: State<RecentStore>, path: String) -> Result<Recent, Stri
     Ok(next)
 }
 
+#[tauri::command(async)]
+fn settings_get(store: State<SettingsStore>) -> Settings {
+    store.inner.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+#[tauri::command(async)]
+fn settings_set(store: State<SettingsStore>, settings: Settings) -> Result<(), String> {
+    let mut guard = store.inner.lock().unwrap_or_else(|e| e.into_inner());
+    settings::save(&store.path, &settings)?;
+    *guard = settings;
+    Ok(())
+}
+
+/// Whether the updater and process plugins were registered: only when
+/// `plugins.updater.pubkey` in tauri.conf.json is non-empty.
+struct UpdaterConfigured(bool);
+
+fn pubkey_configured(updater_config: Option<&serde_json::Value>) -> bool {
+    updater_config
+        .and_then(|c| c.get("pubkey"))
+        .and_then(|k| k.as_str())
+        .is_some_and(|k| !k.trim().is_empty())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppInfo {
+    version: String,
+    updater_configured: bool,
+}
+
+#[tauri::command]
+fn app_info(app: tauri::AppHandle, updater: State<UpdaterConfigured>) -> AppInfo {
+    AppInfo {
+        version: app.package_info().version.to_string(),
+        updater_configured: updater.0,
+    }
+}
+
+#[tauri::command(async)]
+fn drafts_list(store: State<DraftStore>) -> Vec<Draft> {
+    let _guard = store.lock.lock().unwrap_or_else(|e| e.into_inner());
+    drafts::list(&store.dir)
+}
+
+#[tauri::command(async)]
+fn draft_save(store: State<DraftStore>, draft: Draft) -> Result<(), String> {
+    let _guard = store.lock.lock().unwrap_or_else(|e| e.into_inner());
+    drafts::save(&store.dir, &draft)
+}
+
+#[tauri::command(async)]
+fn draft_delete(store: State<DraftStore>, id: String) -> Result<(), String> {
+    let _guard = store.lock.lock().unwrap_or_else(|e| e.into_inner());
+    drafts::delete(&store.dir, &id)
+}
+
 pub fn run() {
     use tauri::Emitter;
 
@@ -191,16 +339,34 @@ pub fn run() {
             }
         }))
         .manage(PendingOpen(Mutex::new(Pending::default())))
+        .manage(LatestSearch::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // The updater refuses to start without a public key, so both
+            // plugins are only registered once the key is in the config.
+            let configured = pubkey_configured(app.config().plugins.0.get("updater"));
+            if configured {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+            }
+            app.manage(UpdaterConfigured(configured));
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
+            app.manage(DraftStore {
+                dir: dir.join("drafts"),
+                lock: Mutex::new(()),
+            });
             let path = dir.join("recent.json");
             let recent = Recent::load(&path);
             app.manage(RecentStore {
                 path,
                 inner: Mutex::new(recent),
+            });
+            let settings_path = dir.join("settings.json");
+            app.manage(SettingsStore {
+                inner: Mutex::new(settings::load(&settings_path)),
+                path: settings_path,
             });
             app.manage(WatchState(Mutex::new(start_watcher(app.handle().clone()))));
             Ok(())
@@ -209,11 +375,24 @@ pub fn run() {
             launch_paths,
             read_file,
             write_file,
+            write_image,
+            read_image,
+            create_file,
+            create_dir,
+            rename_path,
+            trash_path,
             list_tree,
+            search_folder,
             watch,
             recent_get,
             recent_add,
-            recent_remove
+            recent_remove,
+            drafts_list,
+            draft_save,
+            draft_delete,
+            settings_get,
+            settings_set,
+            app_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running Folio");
@@ -222,6 +401,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updater_needs_a_non_empty_pubkey() {
+        use serde_json::json;
+        assert!(!pubkey_configured(None));
+        assert!(!pubkey_configured(Some(&json!({ "endpoints": [] }))));
+        assert!(!pubkey_configured(Some(&json!({ "pubkey": "" }))));
+        assert!(!pubkey_configured(Some(&json!({ "pubkey": "  " }))));
+        assert!(!pubkey_configured(Some(&json!({ "pubkey": 5 }))));
+        assert!(pubkey_configured(Some(&json!({ "pubkey": "abc" }))));
+    }
 
     #[test]
     fn second_launch_before_ready_is_queued_then_drained() {

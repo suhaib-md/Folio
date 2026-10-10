@@ -10,22 +10,41 @@
 </head>
 <body>
 <div class="app">
-  <aside id="sidebar" class="sidebar" aria-label="Folder" hidden></aside>
+  <aside id="sidebar" class="sidebar" aria-label="Sidebar" hidden>
+    <div class="sidebar-tabs" role="tablist" aria-label="Sidebar views">
+      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-files" data-tab="files" aria-controls="sidebar-panel-files" aria-selected="true" title="Files">Files</button>
+      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-outline" data-tab="outline" aria-controls="sidebar-panel-outline" aria-selected="false" tabindex="-1" title="Outline (Ctrl+Shift+L)">Outline</button>
+      <button type="button" role="tab" class="sidebar-tab" id="sidebar-tab-search" data-tab="search" aria-controls="sidebar-panel-search" aria-selected="false" tabindex="-1" title="Search">Search</button>
+    </div>
+    <div id="sidebar-panel-files" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-tab-files">
+      <div id="files-tree" class="files-tree"></div>
+      <div id="files-empty" class="sidebar-empty" hidden>
+        <button id="sidebar-open-folder" type="button" class="btn" title="Open a folder (Ctrl+Shift+O)">Open folder</button>
+      </div>
+    </div>
+    <div id="sidebar-panel-outline" class="sidebar-panel outline-panel" role="tabpanel" aria-labelledby="sidebar-tab-outline" hidden></div>
+    <div id="sidebar-panel-search" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-tab-search" hidden>
+      <div id="search-panel" class="search-panel"></div>
+    </div>
+  </aside>
 
   <div class="main">
     <div id="tabbar" class="tabbar" role="tablist" aria-label="Open files" hidden></div>
 
     <div id="toolbar" class="toolbar" hidden>
       <span id="filename" class="filename"></span>
+      <span id="wordcount" class="wordcount" aria-live="off" hidden></span>
       <div id="mode-switch" class="mode-switch" role="group" aria-label="View mode">
         <button type="button" class="mode-btn" data-mode="read" aria-pressed="false" title="Read (Ctrl+E)">Read</button>
         <button type="button" class="mode-btn" data-mode="edit" aria-pressed="false" title="Edit (Ctrl+E)">Edit</button>
         <button type="button" class="mode-btn" data-mode="split" aria-pressed="false" title="Split (Ctrl+\)">Split</button>
       </div>
+      <button id="more-btn" type="button" class="more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" title="More actions">⋯</button>
     </div>
 
     <div id="app-banner" class="banner banner-error" role="alert" hidden>
       <span id="app-banner-text" class="banner-text"></span>
+      <div id="app-banner-actions" class="banner-actions" hidden></div>
       <button id="app-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss">×</button>
     </div>
 
@@ -35,10 +54,15 @@
         <button id="tab-banner-reload" type="button" class="btn btn-small btn-primary">Reload</button>
         <button id="tab-banner-keep" type="button" class="btn btn-small">Keep mine</button>
       </div>
+      <div id="tab-banner-recovered" class="banner-actions" hidden>
+        <button id="tab-banner-keep-draft" type="button" class="btn btn-small btn-primary">Keep</button>
+        <button id="tab-banner-discard-draft" type="button" class="btn btn-small">Discard</button>
+      </div>
       <button id="tab-banner-close" type="button" class="banner-close" aria-label="Dismiss" title="Dismiss">×</button>
     </div>
 
     <div id="panes" class="panes" data-view="read">
+      <div id="find" class="find-bar" role="search" aria-label="Find in document" hidden></div>
       <div id="editor" class="editor-pane" hidden></div>
       <main id="content" class="content" tabindex="-1">
         <div class="column">
@@ -58,5 +82,6 @@
     </div>
   </div>
 </div>
+<div id="print-area" class="print-area" aria-hidden="true"></div>
 </body>
 </html>

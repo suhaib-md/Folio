@@ -22,7 +22,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0d1117;
     --fg: #e6edf3;
     --muted: #9198a1;
@@ -42,6 +42,15 @@
     --hl-attr: #79c0ff;
     --hl-tag: #7ee787;
     --hl-variable: #ffa657;
+    --backdrop: rgb(0 0 0 / 0.55);
+    --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.6);
+    --shadow-find: 0 4px 14px rgb(0 0 0 / 0.5);
+    --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.5);
+    --find-none: #ff7b72;
+    --find-hl-bg: #6b5d12;
+    --find-hl-fg: #f0f6fc;
+    --find-cur-bg: #c2570c;
+    --find-cur-fg: #fff;
     color-scheme: dark;
   }
 }

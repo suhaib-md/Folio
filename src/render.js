@@ -2,6 +2,7 @@ import { Marked } from 'marked';
 import { gfmHeadingId, resetHeadings } from 'marked-gfm-heading-id';
 import createDOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
+import { mathExtension } from './math-extension.js';
 
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ESCAPES[c]);
@@ -22,9 +23,11 @@ function code({ text, lang }) {
 }
 
 // Markdown text -> sanitised HTML. Takes a window so it runs in the browser,
-// under jsdom in tests, and later inside the Tauri app.
-export function createRenderer(win) {
+// under jsdom in tests, and later inside the Tauri app. `math` (desktop only)
+// turns $…$ / $$…$$ into placeholders carrying the TeX source.
+export function createRenderer(win, { math = false } = {}) {
   const marked = new Marked({ renderer: { code } }, gfmHeadingId());
+  if (math) marked.use(mathExtension);
 
   const purify = createDOMPurify(win);
   purify.addHook('afterSanitizeAttributes', (node) => {

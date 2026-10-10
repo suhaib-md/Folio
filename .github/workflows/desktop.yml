@@ -43,8 +43,9 @@ jobs:
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  # Also runs on tags: the release job waits for it (a Windows build and
+  # test pass before anything is published).
   windows:
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +72,7 @@ jobs:
 
   release:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    needs: test
+    needs: [test, windows]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -86,10 +87,21 @@ jobs:
         with:
           workspaces: src-tauri -> target
       - run: npm ci
+      # Fail early: without the public key, installs can never update.
+      - run: node scripts/check-updater-key.mjs
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update package. Without the secret, the build fails
+          # (createUpdaterArtifacts below needs it); see docs/updater-setup.md.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Folio ${{ github.ref_name }}'
           releaseDraft: true
+          includeUpdaterJson: true
+          # Only releases sign; normal builds have no key, so the setting
+          # lives in this extra config file, not in tauri.conf.json. The path
+          # is relative to the repo root (tauri-action's projectPath).
+          args: --config src-tauri/tauri.release.conf.json

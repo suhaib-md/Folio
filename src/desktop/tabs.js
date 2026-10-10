@@ -9,6 +9,11 @@ function basename(p) {
   return parts[parts.length - 1] || String(p);
 }
 
+// Tab ids (t1, t2, ...) restart every launch, so a draft's id adds a
+// per-launch nonce: base36 time + 4 random chars (all in [A-Za-z0-9_-]).
+export const launchNonce =
+  Date.now().toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, '0');
+
 export function createState() {
   return { tabs: [], activeId: null, untitledCounter: 0, nextId: 1 };
 }
@@ -29,7 +34,7 @@ export function openFile(state, { path, text, eol, bom }) {
   const id = `t${state.nextId}`;
   const tab = {
     id, path, title: basename(path), text, savedText: text,
-    eol, bom, mode: 'read', scrollTop: 0, banner: null,
+    eol, bom, mode: 'read', scrollTop: 0, banner: null, draftId: `${launchNonce}-${id}`,
   };
   return { ...state, tabs: [...state.tabs, tab], activeId: id, nextId: state.nextId + 1 };
 }
@@ -39,11 +44,28 @@ export function newUntitled(state) {
   const id = `t${state.nextId}`;
   const tab = {
     id, path: null, title: `Untitled-${n}`, text: '', savedText: '',
-    eol: 'lf', bom: false, mode: 'edit', scrollTop: 0, banner: null,
+    eol: 'lf', bom: false, mode: 'edit', scrollTop: 0, banner: null, draftId: `${launchNonce}-${id}`,
   };
   return {
     ...state, tabs: [...state.tabs, tab], activeId: id,
     untitledCounter: n, nextId: state.nextId + 1,
+  };
+}
+
+// A tab rebuilt from a crash-recovery draft. It keeps the draft's id, so
+// another crash overwrites the same draft. `savedText` is the file's text on
+// disk now (null: unreadable; the tab then stays dirty). Opens in Edit.
+// Untitled tabs keep their title and keep the counter ahead of it.
+export function openRecovered(state, { draftId, path, title, text, savedText, eol, bom, banner }) {
+  const id = `t${state.nextId}`;
+  const tab = {
+    id, path, title: path != null ? basename(path) : title, text, savedText,
+    eol, bom, mode: 'edit', scrollTop: 0, banner, draftId,
+  };
+  const m = path == null ? /^Untitled-(\d+)$/.exec(title) : null;
+  return {
+    ...state, tabs: [...state.tabs, tab], activeId: id, nextId: state.nextId + 1,
+    untitledCounter: m ? Math.max(state.untitledCounter, Number(m[1])) : state.untitledCounter,
   };
 }
 
@@ -57,12 +79,27 @@ export const MODES = ['read', 'edit', 'split'];
 export const setMode = (state, id, mode) =>
   (MODES.includes(mode) ? update(state, id, () => ({ mode })) : state);
 export const setBanner = (state, id, banner) => update(state, id, () => ({ banner }));
+// Set by a failed autosave, cleared by the next successful save.
+export const setAutosavePaused = (state, id, paused) =>
+  update(state, id, () => ({ autosavePaused: !!paused }));
+// A save reached the disk: `text` is now the file (and `path` the file, for
+// Save As). Save errors and disk banners are moot, and autosave may resume.
+export function saveSucceeded(state, id, { path, text }) {
+  let next = markSaved(state, id, path != null ? { path, text } : { text });
+  const tab = next.tabs.find((t) => t.id === id);
+  if (tab?.banner) next = setBanner(next, id, null);
+  return setAutosavePaused(next, id, false);
+}
 export const clearSaved = (state, id) => update(state, id, () => ({ savedText: null }));
 
 export function markSaved(state, id, { path, text }) {
   return update(state, id, () =>
     path != null ? { savedText: text, path, title: basename(path) } : { savedText: text });
 }
+
+// The tab's file was renamed or moved: same text and saved text, new path.
+export const retarget = (state, id, path) =>
+  update(state, id, () => ({ path, title: basename(path) }));
 
 // The file was (re)read from disk: it becomes the tab's text and saved text.
 export const loadFromDisk = (state, id, { text, eol, bom }) =>

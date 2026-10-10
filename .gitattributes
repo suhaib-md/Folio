@@ -1,0 +1,4 @@
+# Byte-sensitive test inputs and golden files: keep LF on every platform
+# (Windows CI checks out with core.autocrlf=true).
+tests/fixtures/** text eol=lf
+tests/*.md text eol=lf

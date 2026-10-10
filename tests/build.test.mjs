@@ -67,3 +67,10 @@ test('inline script hides closing tags from tools that inject before </body>', (
   assert.equal(html.match(/<\/body>/gi).length, 1);
   assert.equal(html.match(/<\/head>/gi).length, 1);
 });
+
+test('web build stays within 1% of the 0.2 size and follows the system theme only', () => {
+  const BASELINE = 259775; // bytes of dist/folio.html before the 0.3 desktop work
+  assert.ok(Buffer.byteLength(html) <= BASELINE * 1.01, `dist/folio.html is ${Buffer.byteLength(html)} bytes`);
+  assert.match(html, /@media \(prefers-color-scheme: dark\)\s*\{\s*:root:not\(\[data-theme="light"\]\)/);
+  assert.doesNotMatch(html, /\[data-theme="dark"\]/);
+});

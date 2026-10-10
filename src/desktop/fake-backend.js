@@ -16,10 +16,33 @@
 //                      that it exists (simulates an entry deleted since)
 //   listTreeCalls      number of listTree calls so far
 //   requestClose()     simulate the window close button
+//   drafts             (getter) the crash-recovery drafts, oldest first; they
+//                      live in localStorage ('folio-fake-drafts'), so a page
+//                      reload simulates a crash that keeps them
 //   opened, watched, closed, recent   what the app asked for
-// URL flags: ?failWrites=1 makes writeFile reject with "permission denied";
+//   settings            what settings.json would hold (localStorage
+//                      'folio-fake-settings'), or null
+//   exportPath         set to a path (or null to cancel) to answer the Export
+//                      HTML save dialog; unset it answers /demo/<default name>
+//   exportDefaultName  the default name the last export dialog was given
+//   relaunched         true once relaunch() was called (Install and restart)
+//   failWrites         (get/set) writes reject with "permission denied"
+//   dirs               Set of folders created by createDir (folders otherwise
+//                      exist only through the files in them)
+//   trashed, revealed  paths the app moved to the Recycle Bin / revealed
+// renamePath fires file-changed 'removed' for every old file path BEFORE it
+// resolves (the watcher's event racing the command's answer); trashPath fires
+// it for every removed file. Both fire folder-changed.
+// URL flags: ?slowRename=MS makes renamePath answer MS ms late (the move itself
+// happens at once, like a command whose reply is slow);
+// ?slowWrite=MS makes writeFile take MS ms (the text lands at the end);
+// ?failWrites=1 makes writeFile and writeImage reject with
+// "permission denied";
 // ?open=/a.md,/b.md sets the launch paths (files or folders);
 // ?truncated=1 makes listTree report a truncated tree;
+// ?searchLimit=N sets the searchFolder match limit (default 1000);
+// ?slowDrafts=MS delays the crash-recovery drafts listing by MS (startup race checks);
+// ?noDrafts=1 turns crash-recovery drafts off (none stored, none restored);
 // ?recentFiles=/a.md,/b.md and ?recentFolders=/x seed the recent lists
 // (paths need not exist).
 
@@ -118,8 +141,51 @@ function on(event, cb) {
   return Promise.resolve(() => listeners.get(event).delete(cb));
 }
 
+const DRAFTS_KEY = 'folio-fake-drafts';
+const draftsOff = params.get('noDrafts') === '1';
+const readDrafts = () => {
+  try {
+    return JSON.parse(globalThis.localStorage.getItem(DRAFTS_KEY)) || {};
+  } catch {
+    return {};
+  }
+};
+const writeDrafts = (all) => {
+  try {
+    globalThis.localStorage.setItem(DRAFTS_KEY, JSON.stringify(all));
+  } catch {
+    // storage unavailable: drafts just don't survive
+  }
+};
+const sortedDrafts = () =>
+  Object.values(readDrafts()).sort((a, b) => a.savedAt - b.savedAt || (a.id < b.id ? -1 : 1));
+const validDraftId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
+
+const SETTINGS_KEY = 'folio-fake-settings';
+const readSettings = () => {
+  try {
+    return JSON.parse(globalThis.localStorage.getItem(SETTINGS_KEY));
+  } catch {
+    return null;
+  }
+};
+
+let failWrites = params.get('failWrites') === '1';
+
 const fake = {
   fs,
+  get failWrites() {
+    return failWrites;
+  },
+  set failWrites(v) {
+    failWrites = !!v;
+  },
+  get settings() {
+    return readSettings();
+  },
+  get drafts() {
+    return sortedDrafts();
+  },
   emit,
   opened: [],
   watched: null,
@@ -128,6 +194,10 @@ const fake = {
     return structuredClone(recent);
   },
   listTreeCalls: 0,
+  dirs: new Set(),
+  trashed: [],
+  revealed: [],
+  relaunched: false,
   change(path, text) {
     fs[path] = text;
     emit('file-changed', { path, kind: 'modified' });
@@ -160,6 +230,59 @@ export async function launchPaths() {
   return open ? open.split(',').filter(Boolean) : [];
 }
 
+export async function settingsGet() {
+  // No stored settings: exactly folio-core's Settings::default() as serialised
+  // (sidebar.visible is null: never chosen), so the fake can't hide a mismatch.
+  return readSettings() || {
+    zoom: 100,
+    theme: 'system',
+    autosave: false,
+    sidebar: { visible: null, tab: 'files' },
+    session: { tabs: [], active: null, folder: null },
+  };
+}
+
+export async function settingsSet(settings) {
+  try {
+    globalThis.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // storage unavailable: settings just don't survive a reload
+  }
+}
+
+// ?update=<version> simulates a configured updater with that version
+// available; without it the updater is "not configured".
+const updateVersion = params.get('update') || '';
+
+export async function appInfo() {
+  return { version: '0.3.0-dev', updaterConfigured: !!updateVersion };
+}
+
+// ?updateFail=download|install makes that step reject.
+const updateFail = params.get('updateFail') || '';
+
+export async function checkUpdate() {
+  if (!updateVersion) return null;
+  return {
+    version: updateVersion,
+    download: async (onProgress) => {
+      for (const f of [0.1, 0.42, 1]) {
+        await new Promise((r) => setTimeout(r, 400));
+        onProgress(f);
+      }
+      if (updateFail === 'download') throw 'simulated download failure';
+    },
+    install: async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      if (updateFail === 'install') throw 'simulated install failure';
+    },
+  };
+}
+
+export async function relaunch() {
+  fake.relaunched = true;
+}
+
 export async function readFile(path) {
   // Same error strings as folio-core (files.rs / tree.rs).
   if (!(path in fs)) throw 'file not found';
@@ -168,9 +291,117 @@ export async function readFile(path) {
   return { text, eol: 'lf', bom: false };
 }
 
+// ---- sidebar file operations (same checks and error strings as fileops.rs) --
+
+const isLocalAbs = (p) => /^(\/(?![\\/])|[A-Za-z]:[\\/])/.test(String(p));
+const trimSlash = (p) => String(p).replace(/\/+$/, '') || '/';
+const parentOf = (p) => trimSlash(p).replace(/\/[^/]*$/, '') || '/';
+const isDir = (p) => {
+  const base = trimSlash(p);
+  return fake.dirs.has(base) || Object.keys(fs).some((k) => k.startsWith(base === '/' ? '/' : base + '/'));
+};
+const entryExists = (p) => trimSlash(p) in fs || isDir(p);
+const needLocal = (...ps) => {
+  if (!ps.every(isLocalAbs)) throw 'not a local path';
+};
+
+export async function createFile(path) {
+  needLocal(path);
+  if (entryExists(path)) throw 'already exists';
+  if (!isDir(parentOf(path))) throw 'not found';
+  if (failWrites) throw 'permission denied';
+  fs[path] = '';
+  folderChanged(path);
+}
+
+export async function createDir(path) {
+  needLocal(path);
+  if (entryExists(path)) throw 'already exists';
+  if (!isDir(parentOf(path))) throw 'not found';
+  if (failWrites) throw 'permission denied';
+  fake.dirs.add(trimSlash(path));
+  folderChanged(path);
+}
+
+export async function renamePath(from, to) {
+  needLocal(from, to);
+  from = trimSlash(from);
+  to = trimSlash(to);
+  if (!entryExists(from)) throw 'not found';
+  if (entryExists(to) && !(norm(from) === norm(to) && from !== to && parentOf(from) === parentOf(to))) throw 'already exists';
+  if (!isDir(parentOf(to))) throw 'not found';
+  if (failWrites) throw 'permission denied';
+  const prefix = from + '/';
+  const moved = [];
+  for (const k of Object.keys(fs)) {
+    if (k === from || k.startsWith(prefix)) moved.push([k, to + k.slice(from.length), fs[k]]);
+  }
+  for (const [old] of moved) delete fs[old];
+  for (const [, next, text] of moved) fs[next] = text;
+  for (const d of [...fake.dirs]) {
+    if (d === from || d.startsWith(prefix)) {
+      fake.dirs.delete(d);
+      fake.dirs.add(to + d.slice(from.length));
+    }
+  }
+  // The watcher's "removed" for the old paths (also for a case-only rename,
+  // as on a case-sensitive disk).
+  for (const [old] of moved) emit('file-changed', { path: old, kind: 'removed' });
+  folderChanged(from);
+  const slow = Number(params.get('slowRename')) || 0;
+  if (slow) await new Promise((r) => setTimeout(r, slow));
+}
+
+export async function trashPath(path) {
+  needLocal(path);
+  path = trimSlash(path);
+  if (!entryExists(path)) throw 'not found';
+  if (failWrites) throw 'permission denied';
+  const prefix = path + '/';
+  const gone = Object.keys(fs).filter((k) => k === path || k.startsWith(prefix));
+  for (const k of gone) delete fs[k];
+  for (const d of [...fake.dirs]) if (d === path || d.startsWith(prefix)) fake.dirs.delete(d);
+  fake.trashed.push(path);
+  for (const k of gone) emit('file-changed', { path: k, kind: 'removed' });
+  folderChanged(path);
+}
+
+export async function revealPath(path) {
+  needLocal(path);
+  if (!entryExists(path)) throw 'not found';
+  fake.revealed.push(path);
+}
+
 export async function writeFile(path, text /* , eol, bom */) {
-  if (params.get('failWrites') === '1') throw 'permission denied';
+  if (failWrites) throw 'permission denied';
+  const slow = Number(params.get('slowWrite')) || 0;
+  if (slow) await new Promise((r) => setTimeout(r, slow));
   fs[path] = text;
+}
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
+const MIME = { jpg: 'jpeg', svg: 'svg+xml', ico: 'x-icon' };
+
+// Same checks and error strings as folio-core image.rs. Stored as a data URL
+// (like the demo picture) so assetUrl can show it.
+export async function writeImage(path, base64) {
+  const m = IMAGE_EXT.exec(path);
+  if (!m) throw 'not an image file';
+  if (failWrites) throw 'permission denied';
+  if (path in fs) throw 'already exists';
+  const ext = m[1].toLowerCase();
+  fs[path] = `data:image/${MIME[ext] || ext};base64,${base64}`;
+  folderChanged(path);
+}
+
+// Same checks and error strings as folio-core image.rs read_image.
+export async function readImageBase64(path) {
+  if (!IMAGE_EXT.test(path)) throw 'not an image file';
+  if (!(path in fs)) throw 'file not found';
+  const m = /^data:[^,]*;base64,(.*)$/s.exec(fs[path]);
+  if (!m) throw 'not an image file';
+  if (m[1].length * 0.75 > 10 * 1024 * 1024) throw 'too large';
+  return m[1];
 }
 
 // Same rules as the Rust lister: .md/.markdown files, folders only if they
@@ -213,6 +444,118 @@ export async function listTree(folder) {
   return { root, truncated: params.get('truncated') === '1' };
 }
 
+// Same rules as folio-core search.rs: tree skip rules and order, plain
+// substring matching on code points, 200-char windows around each match.
+const SEARCH_WINDOW = 200;
+const SEARCH_LEAD = 60;
+let latestSearch = 0;
+const foldChar = (c) => {
+  if (c === '\u03c2') return '\u03c3';
+  const l = c.toLowerCase();
+  return [...l].length === 1 ? l : c;
+};
+
+function lineMatches(lineNo, rawLine, query, matchCase, out, limit, total) {
+  const chars = [...rawLine.replace(/\r+$/, '')];
+  const q = query.length;
+  const hay = matchCase ? chars : chars.map(foldChar);
+  let i = 0;
+  while (i + q <= hay.length) {
+    let ok = true;
+    for (let k = 0; k < q; k++) {
+      if (hay[i + k] !== query[k]) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) {
+      i += 1;
+      continue;
+    }
+    if (total.n >= limit) return true;
+    total.n += 1;
+    let ws = 0;
+    let we = chars.length;
+    if (chars.length > SEARCH_WINDOW) {
+      ws =
+        q >= SEARCH_WINDOW
+          ? i
+          : Math.min(Math.max(i - SEARCH_LEAD, 0, i + q - SEARCH_WINDOW), chars.length - SEARCH_WINDOW);
+      we = Math.min(ws + SEARCH_WINDOW, chars.length);
+    }
+    const start = chars.slice(ws, i).join('').length;
+    out.push({
+      line: lineNo,
+      col: chars.slice(0, i).join('').length,
+      text: chars.slice(ws, we).join(''),
+      start,
+      end: start + chars.slice(i, Math.min(i + q, we)).join('').length,
+    });
+    i += q;
+  }
+  return false;
+}
+
+export async function searchFolder(folder, query, matchCase, requestId) {
+  // Like the Rust side: a request is cancelled once a newer (greater) id exists.
+  latestSearch = Math.max(latestSearch, requestId);
+  const cancelled = () => latestSearch > requestId;
+  await Promise.resolve(); // keep the async shape: a newer call can overtake
+  if (cancelled()) throw 'cancelled';
+  if (!query) return { requestId, files: [], truncated: false };
+  const limit = Number(params.get('searchLimit')) || 1000;
+  const q = [...query].map((c) => (matchCase ? c : foldChar(c)));
+  const base = String(folder).replace(/\/+$/, '') || '/';
+  const prefix = base === '/' ? '/' : base + '/';
+  const key = (s) => [s.toLowerCase(), s];
+  const cmp = (a, b) => {
+    const [la, ra] = key(a);
+    const [lb, rb] = key(b);
+    return la < lb ? -1 : la > lb ? 1 : ra < rb ? -1 : ra > rb ? 1 : 0;
+  };
+  // Order like the tree: per folder, subfolders first, then files.
+  const orderIn = (paths, pre) => {
+    const dirs = new Map();
+    const files = [];
+    for (const p of paths) {
+      const rest = p.slice(pre.length).split('/');
+      if (rest.length === 1) files.push(p);
+      else {
+        if (!dirs.has(rest[0])) dirs.set(rest[0], []);
+        dirs.get(rest[0]).push(p);
+      }
+    }
+    const out = [];
+    for (const name of [...dirs.keys()].sort(cmp)) out.push(...orderIn(dirs.get(name), pre + name + '/'));
+    return out.concat(files.sort((a, b) => cmp(a.split('/').pop(), b.split('/').pop())));
+  };
+  const skipped = (parts) =>
+    parts.slice(0, -1).some((n) => n.startsWith('.') || n === 'node_modules') || parts[parts.length - 1].startsWith('.');
+  const candidates = Object.keys(fs).filter((p) => {
+    if (!p.startsWith(prefix) || !/\.(md|markdown)$/i.test(p)) return false;
+    return !skipped(p.slice(prefix.length).split('/'));
+  });
+  const files = [];
+  const total = { n: 0 };
+  let truncated = false;
+  for (const path of orderIn(candidates, prefix)) {
+    if (cancelled()) throw 'cancelled';
+    const text = fs[path];
+    if (isImage(text) || text.includes('\u0000')) continue;
+    const matches = [];
+    const lines = text.replace(/\r\n/g, '\n').split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (lineMatches(i + 1, lines[i], q, matchCase, matches, limit, total)) {
+        truncated = true;
+        break;
+      }
+    }
+    if (matches.length) files.push({ path, matches });
+    if (truncated) break;
+  }
+  return { requestId, files, truncated };
+}
+
 export async function watch(files, folder) {
   fake.watched = { files: [...files], folder };
 }
@@ -237,6 +580,29 @@ export async function recentRemove(path) {
   return recentGet();
 }
 
+export async function draftsList() {
+  const slow = Number(params.get('slowDrafts'));
+  if (slow > 0) await new Promise((r) => setTimeout(r, slow));
+  return draftsOff ? [] : sortedDrafts();
+}
+
+export async function draftSave(draft) {
+  if (!validDraftId(draft?.id)) throw 'invalid draft id';
+  if (draftsOff) return;
+  const all = readDrafts();
+  all[draft.id] = structuredClone(draft);
+  writeDrafts(all);
+}
+
+export async function draftDelete(id) {
+  if (!validDraftId(id)) throw 'invalid draft id';
+  const all = readDrafts();
+  if (id in all) {
+    delete all[id];
+    writeDrafts(all);
+  }
+}
+
 export async function pickFiles() {
   return ['/demo/README.md'];
 }
@@ -247,6 +613,13 @@ export async function pickFolder() {
 
 export async function pickSavePath(/* defaultName */) {
   return '/demo/saved.md';
+}
+
+// Test hook: window.__fake.exportPath overrides the answer; null cancels.
+export async function pickExportPath(defaultName) {
+  if ('exportPath' in fake) return fake.exportPath;
+  fake.exportDefaultName = defaultName;
+  return `/demo/${defaultName}`;
 }
 
 export async function openExternal(url) {
@@ -272,6 +645,8 @@ export async function onCloseRequested(cb) {
 export async function closeWindow() {
   fake.closed = true;
 }
+
+export async function setWindowTheme(/* theme */) {}
 
 export async function setTitle(t) {
   document.title = t;

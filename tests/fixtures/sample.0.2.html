@@ -1,0 +1,70 @@
+<h1 id="user-content-sample-document">Sample Document</h1>
+<p>A paragraph with <strong>bold</strong>, <em>italic</em>, <del>strikethrough</del>, <code>inline code</code> and a
+<a href="https://example.com" target="_blank" rel="noopener noreferrer">link to example.com</a>. Jump to <a href="#images">the images section</a>
+or to the <a href="#intro-1">second intro</a>.</p>
+<h2 id="user-content-intro">Intro</h2>
+<p>First intro section.</p>
+<h2 id="user-content-lists">Lists</h2>
+<ul>
+<li>Apples</li>
+<li>Oranges<ul>
+<li>Blood oranges</li>
+</ul>
+</li>
+</ul>
+<ol>
+<li>One</li>
+<li>Two</li>
+</ol>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> Finished task</li>
+<li><input disabled="" type="checkbox"> Open task</li>
+</ul>
+<h2 id="user-content-table">Table</h2>
+<table>
+<thead>
+<tr>
+<th>Language</th>
+<th>Typing</th>
+<th align="right">Year</th>
+<th>A very long column header that keeps going and going</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Python</td>
+<td>Dynamic</td>
+<td align="right">1991</td>
+<td>Lots of text in this cell to make the table wider than a phone screen</td>
+</tr>
+<tr>
+<td>Rust</td>
+<td>Static</td>
+<td align="right">2015</td>
+<td>More text here too</td>
+</tr>
+</tbody></table>
+<h2 id="user-content-code">Code</h2>
+<pre><code class="hljs language-js"><span class="hljs-comment">// Greets someone</span>
+<span class="hljs-keyword">function</span> <span class="hljs-title function_">greet</span>(<span class="hljs-params">name</span>) {
+  <span class="hljs-keyword">return</span> <span class="hljs-string">`Hello, <span class="hljs-subst">${name}</span>!`</span>;
+}
+</code></pre><pre><code class="hljs language-python"><span class="hljs-keyword">def</span> <span class="hljs-title function_">add</span>(<span class="hljs-params">a: <span class="hljs-built_in">int</span>, b: <span class="hljs-built_in">int</span></span>) -&gt; <span class="hljs-built_in">int</span>:
+    <span class="hljs-string">"""Add two numbers."""</span>
+    <span class="hljs-keyword">return</span> a + b
+</code></pre><pre><code class="hljs">plain block with no language, and a really long line that should scroll horizontally inside the block rather than widen the page
+</code></pre><blockquote>
+<p>A blockquote with a thought worth quoting.</p>
+</blockquote>
+<hr>
+<h2 id="user-content-images">Images</h2>
+<p>Web image (needs internet):</p>
+<p><img src="https://placehold.co/600x200/png?text=Web+image" alt="Placeholder"></p>
+<p>Relative image (expected to be broken in v1):</p>
+<p><img src="images/pic.png" alt="Relative"></p>
+<h2 id="user-content-intro-1">Intro</h2>
+<p>Second intro section (duplicate heading).</p>
+<h2 id="user-content-safety">Safety</h2>
+
+<img src="x">
+[click me](javascript:window.__pwned='link')
+<p>If you can read this line, the unsafe HTML above was removed.</p>
